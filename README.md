@@ -1,8 +1,9 @@
 # Wet Gas Compressor — Digital Twin (Real‑Time Monitoring & Optimization)
 
+This repository showcases a professional, demo-grade Digital Twin for a Wet Gas Compressor (WGC). It ingests synthetic process & mechanical-health telemetry in real time and renders an operator-friendly web dashboard for monitoring, diagnostics, and what-if control.
+
 > **Live Demo (Cloud Run):** https://wgc-demo-502630974508.us-central1.run.app/wgc
 
-> **Note:** The repository name may still say `motor-digitaltwin`, but this project is now a **Wet Gas Compressor (WGC)** digital twin demo.
 
 ![Dashboard](docs/screenshot.png)
 
@@ -217,10 +218,10 @@ The Flask service reads a few environment variables:
 - Socket.IO on Cloud Run works over **WebSockets** and **polling**; no extra config needed.
 
 ---
-
 ## 📜 License
 
-MIT — see `LICENSE`.
+```
+MIT © 2025 Apparsamy Perumal
 
 ---
 
