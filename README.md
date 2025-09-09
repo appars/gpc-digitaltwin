@@ -1,11 +1,7 @@
 # Digital Twin — Wet Gas Compressor (WGC)
-**Real‑time Monitoring & Optimization Demo**
-
-> **Note:** The repository name is historic (`motor-digitaltwin`). The app now demonstrates a **Wet Gas Compressor** digital twin.
-
+## Real‑time Monitoring & Optimization
+This repository showcases a professional, demo-grade **Digital Twin for a Wet Gas Compressor (WGC)**. It ingests synthetic process & mechanical-health telemetry in real time and renders an operator-friendly web dashboard for monitoring, diagnostics, and what-if control.
 ![Dashboard](docs/screenshot.png)
-
-> Put a screenshot at **`docs/screenshot.png`** to show it above.
 
 ---
 
@@ -208,7 +204,7 @@ pip install -r requirements.txt
 Choose a license (e.g., **MIT**) for your repo:
 
 ```
-MIT © 2025 Your Name
+MIT © 2025 Apparsamy Perumal
 ```
 
 ---
