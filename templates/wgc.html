@@ -1,386 +1,604 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Digital Twin — Wet Gas Compressor</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<meta charset="utf-8" />
+<title>Digital Twin - Wet Gas Compressor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Socket.IO client (pinned) -->
-  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js" crossorigin="anonymous"></script>
-  <!-- Chart.js + jsPDF -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<!-- Local plugins (placed under static/vendor/) -->
+<script src="/static/vendor/chartjs-plugin-zoom.umd.min.js"></script>
+<script src="/static/vendor/chartjs-plugin-annotation.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous"></script>
 
-  <style>
-    :root{
-      --bg:#f6f7fb; --card:#ffffff; --text:#0f172a; --muted:#6b7280; --border:#e5e7eb;
-      --ok:#16a34a; --warn:#b91c1c; --brand:#0ea5e9; --grid: rgba(0,0,0,.06);
-      --c-flow:#1f77b4; --c-p1:#e67e22; --c-p2:#8e44ad; --c-ax:#2563eb; --c-ve:#e11d48; --c-ho:#f59e0b;
-    }
-    html[data-theme="dark"]{
-      --bg:#0b1220; --card:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --border:#1f2937;
-      --ok:#22c55e; --warn:#ef4444; --brand:#38bdf8; --grid: rgba(255,255,255,.10);
-      --c-flow:#60a5fa; --c-p1:#f59e0b; --c-p2:#c084fc; --c-ax:#93c5fd; --c-ve:#f87171; --c-ho:#fbbf24;
-    }
-    *{ box-sizing:border-box }
-    body{ margin:0; background:var(--bg); color:var(--text);
-          font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-    .wrap{ max-width:1200px; margin:24px auto; padding:0 18px; }
-    .topbar{ display:flex; align-items:center; justify-content:space-between; margin:6px 0 14px }
-    .title{ font-size:22px; font-weight:700 }
-    .top-actions{ display:flex; gap:10px; align-items:center }
-    .toggle{ padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer }
-    .brand{ background:var(--brand) !important; color:#fff !important; border-color:var(--brand) !important }
-
-    .card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow:0 6px 16px rgba(0,0,0,.04); }
-    .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
-    .metric{ background:color-mix(in oklab, var(--card) 85%, var(--bg));
-             border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
-    .label{ font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
-    .value{ font-size:28px; font-weight:600; margin-top:2px; }
-    .ok{ color:var(--ok); } .warn{ color:var(--warn); font-weight:700 }
-    .controls{ display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 }
-    button{ padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer }
-    button:disabled{ opacity:.55; cursor:not-allowed }
-    button:active{ transform:translateY(1px) }
-    .setpoints .metric{ background:var(--card) }
-    .chart-card{ padding:12px; }
-    canvas{ background:var(--card); border:1px solid var(--border); border-radius:10px; }
-    ul{ margin:.4rem 0 0 1.1rem }
-    .subtle{ color:var(--muted); font-size:13px }
-  </style>
+<style>
+:root{
+  --bg:#f6f7fb; --card:#ffffff; --text:#0f172a; --muted:#6b7280; --border:#e5e7eb; --grid: rgba(0,0,0,.06);
+  --brand:#0ea5e9; --ok:#16a34a; --warn:#ef4444;
+  --c-flow:#1f77b4; --c-p1:#e67e22; --c-p2:#8e44ad; --c-ax:#2563eb; --c-ve:#e11d48; --c-ho:#f59e0b;
+  --anno-warn: rgba(245,158,11,.14); --anno-trip: rgba(239,68,68,.14);
+}
+html[data-theme="dark"]{
+  --bg:#0b1220; --card:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --border:#1f2937; --grid: rgba(255,255,255,.10);
+  --brand:#38bdf8; --ok:#22c55e; --warn:#ef4444;
+  --c-flow:#60a5fa; --c-p1:#f59e0b; --c-p2:#c084fc; --c-ax:#93c5fd; --c-ve:#f87171; --c-ho:#fbbf24;
+  --anno-warn: rgba(245,158,11,.20); --anno-trip: rgba(239,68,68,.20);
+}
+*{ box-sizing:border-box }
+body{ margin:0; background:var(--bg); color:var(--text); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+.wrap{ max-width:1280px; margin:24px auto; padding:0 18px; }
+.topbar{ display:flex; align-items:center; justify-content:space-between; margin:6px 0 14px }
+.title{ font-size:22px; font-weight:700 }
+.top-actions{ display:flex; gap:10px; align-items:center; flex-wrap:wrap }
+.status{ padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:var(--card); font-weight:600 }
+.status.running{ color:#fff; background:#10b981; border-color:#10b981 }
+.status.stopped{ color:#fff; background:#ef4444; border-color:#ef4444 }
+button, .toggle, select, input[type="range"]{
+  padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer;
+}
+button[disabled]{ opacity:0.55; cursor:not-allowed }
+.brand{ background:var(--brand); color:#fff; border-color:var(--brand); }
+.card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow:0 6px 16px rgba(0,0,0,.04); }
+.grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.metric{ background:color-mix(in oklab, var(--card) 85%, var(--bg)); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+.label{ font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+.value{ font-size:28px; font-weight:600; margin-top:2px; }
+.ok{ color:var(--ok) } .warn{ color:var(--warn) }
+.controls{ display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 }
+.toolbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:10px 0 8px }
+.chart-card{ padding:12px }
+canvas{ background:var(--card); border:1px solid var(--border); border-radius:10px; width:100% !important; }
+.canvas-process{ height:260px !important }
+.canvas-vib{ height:200px !important }
+.canvas-map{ height:220px !important }
+.subtle{ color:var(--muted); font-size:13px }
+ul{ margin:.4rem 0 0 1.1rem }
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="topbar">
-      <div class="title">Digital Twin for Wet Gas Compressor — Real-Time Monitoring &amp; Optimization</div>
-      <div class="top-actions">
-        <button id="btn-theme" class="toggle" title="Toggle Dark/Light">🌙 Dark</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <!-- KPIs -->
-      <div class="grid">
-        <div class="metric"><div class="label">Compression Ratio</div><div id="cr" class="value">—</div></div>
-        <div class="metric"><div class="label">Flow (kg/s)</div><div id="flow" class="value">—</div></div>
-        <div class="metric"><div class="label">P₁ / P₂ (bar)</div><div id="pp" class="value">—</div></div>
-        <div class="metric"><div class="label">T₁ / T₂ (K)</div><div id="tt" class="value">—</div></div>
-        <div class="metric"><div class="label">Shaft Speed ( rpm )</div><div id="speed" class="value">—</div></div>
-        <div class="metric"><div class="label">Valve (%)</div><div id="valve" class="value">—</div><div id="sm_status" class="ok subtle">OK</div></div>
-
-        <div class="metric"><div class="label">Surge Margin</div><div id="sm" class="value">—</div></div>
-        <div class="metric"><div class="label">Head Index</div><div id="head" class="value">—</div></div>
-        <div class="metric"><div class="label">Efficiency Index</div><div id="eff" class="value">—</div></div>
-
-        <div class="metric"><div class="label">Lube Oil (bar)</div><div id="oilp" class="value">—</div></div>
-        <div class="metric"><div class="label">Bearing / Oil Temp (K)</div><div id="bt" class="value">—</div></div>
-        <div class="metric"><div class="label">Seal Leakage (L/min)</div><div id="seal" class="value">—</div></div>
-
-        <div class="metric"><div class="label">Vibration (Ax/V/H, mm/s)</div><div id="vib" class="value">—</div><div id="vib_status" class="ok subtle">OK</div></div>
-      </div>
-
-      <!-- Controls -->
-      <div class="controls">
-        <button id="btn-pause">Pause Charts</button>
-        <button id="btn-resume">Resume Charts</button>
-        <button id="btn-clear">Clear Charts</button>
-        <button id="btn-csv">Download CSV</button>
-        <button id="btn-png-process">PNG: Process</button>
-        <button id="btn-png-vibration">PNG: Vibration</button>
-        <button id="btn-pdf" class="brand">PDF: Both Charts</button>
-        <button id="btn-stop">Stop WGC</button>
-        <button id="btn-start" class="brand">Start WGC</button>
-      </div>
-
-      <!-- Setpoints -->
-      <div class="card setpoints" style="margin:12px 0;">
-        <div class="label">Setpoints</div>
-        <div class="grid">
-          <div class="metric">
-            <div class="label">Speed (rpm)</div>
-            <input id="sp-speed" type="range" min="6000" max="9000" value="7800" step="10" style="width:100%">
-            <div class="subtle">Value: <span id="sp-speed-val">7800</span></div>
-          </div>
-          <div class="metric">
-            <div class="label">Valve (%)</div>
-            <input id="sp-valve" type="range" min="0" max="100" value="65" step="1" style="width:100%">
-            <div class="subtle">Value: <span id="sp-valve-val">65</span></div>
-          </div>
-          <div class="metric" style="display:flex;align-items:end;">
-            <button id="btn-apply" class="brand">Apply Setpoints</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Charts -->
-      <div class="chart-card"><canvas id="process" height="280"></canvas></div>
-      <div class="chart-card"><canvas id="vibration" height="230"></canvas></div>
-
-      <!-- Alarms -->
-      <div class="metric" style="margin-top:12px;">
-        <div class="label">Active Alarms</div>
-        <ul id="alarms"></ul>
-      </div>
+<div class="wrap">
+  <div class="topbar">
+    <div class="title">Digital Twin for Wet Gas Compressor - Real Time Monitoring and Optimization</div>
+    <div class="top-actions">
+      <span id="run-status" class="status stopped">STOPPED</span>
+      <button id="btn-theme" class="toggle">Dark</button>
     </div>
   </div>
 
-  <!-- Error logger + server snapshot -->
-  <script>
-    window.onerror = (m, s, l, c, e) => console.error('[JS ERROR]', m, s+':'+l, e);
-    window.__WGC__ = {{ wgc | tojson | safe }};
-  </script>
+  <div class="card">
+    <!-- KPIs -->
+    <div class="grid">
+      <div class="metric"><div class="label">Compression Ratio</div><div id="cr" class="value">-</div></div>
+      <div class="metric"><div class="label">Flow (kg/s)</div><div id="flow" class="value">-</div></div>
+      <div class="metric"><div class="label">P1 / P2 (bar)</div><div id="pp" class="value">-</div></div>
+      <div class="metric"><div class="label">T1 / T2 (K)</div><div id="tt" class="value">-</div></div>
+      <div class="metric"><div class="label">Shaft Speed (rpm)</div><div id="speed" class="value">-</div></div>
+      <div class="metric"><div class="label">Valve (%)</div><div id="valve" class="value">-</div><div id="sm_status" class="subtle ok">OK</div></div>
+      <div class="metric"><div class="label">Surge Margin</div><div id="sm" class="value">-</div></div>
+      <div class="metric"><div class="label">Head Index</div><div id="head" class="value">-</div></div>
+      <div class="metric"><div class="label">Efficiency Index</div><div id="eff" class="value">-</div></div>
+      <div class="metric"><div class="label">Lube Oil (bar)</div><div id="oilp" class="value">-</div></div>
+      <div class="metric"><div class="label">Bearing / Oil Temp (K)</div><div id="bt" class="value">-</div></div>
+      <div class="metric"><div class="label">Seal Leakage (L/min)</div><div id="seal" class="value">-</div></div>
+      <div class="metric"><div class="label">Vibration (Ax/V/H, mm/s)</div><div id="vib" class="value">-</div><div id="vib_status" class="subtle ok">OK</div></div>
+    </div>
 
-  <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    console.log('[BOOT] snapshot', window.__WGC__);
+    <!-- Controls -->
+    <div class="controls">
+      <button id="btn-pause">Pause Charts</button>
+      <button id="btn-resume">Resume Charts</button>
+      <button id="btn-clear">Clear Charts</button>
 
-    // Helpers (define BEFORE any calls that use them)
-    function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
-    const setText = (id, txt) => document.getElementById(id).textContent = txt;
+      <button id="btn-png-process">PNG: Process</button>
+      <button id="btn-png-vibration">PNG: Vibration</button>
+      <button id="btn-csv">Download CSV</button>
+      <button id="btn-pdf" class="brand">PDF: Both Charts</button>
+      <button id="btn-daily">PDF: Daily Report</button>
 
-    // Chart.js defaults
-    Chart.defaults.font.family = 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
-    Chart.defaults.font.size = 13;
-    Chart.defaults.elements.line.borderWidth = 2.6;
-    Chart.defaults.elements.point.radius = 2.5;
-    Chart.defaults.elements.point.hoverRadius = 5;
-    Chart.defaults.elements.point.hitRadius = 10;
+      <button id="btn-stop">Stop WGC</button>
+      <button id="btn-start" class="brand">Start WGC</button>
+    </div>
 
-    // Build charts FIRST so theme refresh can touch them
-    const processChart = new Chart(document.getElementById('process').getContext('2d'), {
-      type:'line',
-      data:{ labels:[], datasets:[
-        { label:'Flow (kg/s)', data:[], tension:.25, fill:false },
-        { label:'P1 (bar)',   data:[], tension:.25, fill:false, yAxisID:'y1' },
-        { label:'P2 (bar)',   data:[], tension:.25, fill:false, yAxisID:'y1', borderDash:[6,4] },
-      ]},
-      options:{
-        maintainAspectRatio:false,
-        plugins:{ legend:{ position:'top', labels:{ usePointStyle:true, boxWidth:10 } } },
-        scales:{
-          y:{  title:{ display:true, text:'Flow (kg/s)', font:{ weight:'600' } } },
-          y1:{ position:'right', title:{ display:true, text:'Pressure (bar)', font:{ weight:'600' } }, grid:{ drawOnChartArea:false } },
-          x:{  ticks:{ maxRotation:45, autoSkip:true, maxTicksLimit:12 } }
+    <!-- Zoom & Time Tools -->
+    <div class="toolbar">
+      <button id="btn-reset-zoom-proc">Reset Zoom (Process)</button>
+      <button id="btn-reset-zoom-vib">Reset Zoom (Vibration)</button>
+      <button id="btn-live" class="brand">Live</button>
+      <input id="scrub" type="range" min="0" max="0" value="0" step="1" style="width:260px">
+      <span id="scrub-label" class="subtle">Live</span>
+      <button id="btn-replay">Replay</button>
+      <button id="btn-replay-stop">Stop Replay</button>
+    </div>
+
+    <!-- Charts -->
+    <div class="chart-card"><canvas id="process" class="canvas-process"></canvas></div>
+    <div class="chart-card"><canvas id="vibration" class="canvas-vib"></canvas></div>
+
+    <!-- Compressor Map -->
+    <div class="chart-card">
+      <div class="label" style="margin-left:4px">Compressor Performance Map (synthetic) - Flow (kg/s) vs Head (kJ/kg)</div>
+      <canvas id="map" class="canvas-map"></canvas>
+    </div>
+
+    <!-- Setpoints -->
+    <div class="card" style="margin:12px 0;">
+      <div class="label">Setpoints</div>
+      <div class="grid">
+        <div class="metric">
+          <div class="label">Speed (rpm)</div>
+          <input id="sp-speed" type="range" min="6000" max="9000" value="7800" step="10" style="width:100%">
+          <div class="subtle">Value: <span id="sp-speed-val">7800</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Valve (%)</div>
+          <input id="sp-valve" type="range" min="0" max="100" value="65" step="1" style="width:100%">
+          <div class="subtle">Value: <span id="sp-valve-val">65</span></div>
+        </div>
+        <div class="metric" style="display:flex;align-items:end;">
+          <button id="btn-apply" class="brand">Apply Setpoints</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alarms -->
+    <div class="metric" style="margin-top:12px;">
+      <div class="label">Active Alarms</div>
+      <ul id="alarms"></ul>
+    </div>
+  </div>
+</div>
+
+<!-- Bootstrap snapshot -->
+<script>window.__WGC__={{ wgc | tojson | safe }};</script>
+
+<script>
+(function(){
+  'use strict';
+
+  // ----- helpers -----
+  function $(s){ return document.querySelector(s); }
+  function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function setBadge(running){
+    var el = $('#run-status');
+    if (!el) return;
+    el.textContent = running ? 'RUNNING' : 'STOPPED';
+    el.className = 'status ' + (running ? 'running' : 'stopped');
+  }
+  function setTheme(isDark){
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : '');
+    localStorage.setItem('wgc_theme', isDark ? 'dark' : 'light');
+    var btn = $('#btn-theme');
+    if (btn) btn.textContent = isDark ? 'Light' : 'Dark';
+    refreshChartTheme();
+  }
+  function refreshChartTheme(){
+    if (!window.processChart || !window.vibChart || !window.mapChart) return;
+    var grid = cssVar('--grid');
+    Chart.defaults.color = cssVar('--text');
+    [processChart, vibChart].forEach(function(ch){
+      var sc = ch.options.scales;
+      if (sc.x && sc.x.grid) sc.x.grid.color = grid;
+      if (sc.y && sc.y.grid) sc.y.grid.color = grid;
+      if (sc.y1 && sc.y1.grid) sc.y1.grid.color = grid;
+      ch.update('none');
+    });
+    mapChart.options.scales.x.grid.color = grid;
+    mapChart.options.scales.y.grid.color = grid;
+    mapChart.update('none');
+  }
+  (function(){
+    var pref = localStorage.getItem('wgc_theme');
+    var wantDark = pref ? (pref === 'dark') : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    setTheme(wantDark);
+    var tbtn = $('#btn-theme');
+    if (tbtn) tbtn.onclick = function(){ setTheme(!(document.documentElement.getAttribute('data-theme') === 'dark')); };
+  })();
+
+  // ----- Chart.js defaults -----
+  Chart.defaults.animation = false;
+  Chart.defaults.elements.line.tension = 0.25;
+  Chart.defaults.elements.point.radius = 0;
+
+  // register local plugins (safe)
+  (function(){
+    var z = window['chartjs-plugin-zoom'] || window.chartjsPluginZoom;
+    var a = window['chartjs-plugin-annotation'] || window.chartjsPluginAnnotation;
+    if (z) { Chart.register(z.default ? z.default : z); }
+    if (a) { Chart.register(a.default ? a.default : a); }
+  })();
+
+  // ----- charts -----
+  window.processChart = new Chart($('#process').getContext('2d'),{
+    type:'line',
+    data:{labels:[],datasets:[
+      {label:'Flow (kg/s)', data:[], borderColor:cssVar('--c-flow')},
+      {label:'P1 (bar)',   data:[], borderColor:cssVar('--c-p1'), yAxisID:'y1'},
+      {label:'P2 (bar)',   data:[], borderColor:cssVar('--c-p2'), yAxisID:'y1', borderDash:[6,4]}
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false, spanGaps:true,
+      plugins:{
+        legend:{ position:'top', labels:{ usePointStyle:true, boxWidth:10 } },
+        decimation:{ enabled:true, algorithm:'lttb', samples:200 },
+        zoom:{ zoom:{ wheel:{enabled:true}, pinch:{enabled:true}, mode:'x' }, pan:{enabled:true, mode:'x'} },
+        annotation:{
+          annotations:{
+            p2_warn:{ type:'line', yMin:9.5, yMax:9.5, yScaleID:'y1', borderColor:'rgba(245,158,11,.9)', borderDash:[6,4], borderWidth:1.2,
+                      label:{enabled:true, content:'P2 Warn 9.5', backgroundColor:'rgba(245,158,11,.12)'} },
+            p2_trip:{ type:'line', yMin:10.5, yMax:10.5, yScaleID:'y1', borderColor:'rgba(239,68,68,.9)', borderDash:[6,4], borderWidth:1.2,
+                      label:{enabled:true, content:'P2 Trip 10.5', backgroundColor:'rgba(239,68,68,.12)'} },
+            p2_zone:{ type:'box', yMin:10.5, yMax:100, xMin:-1000000000000, xMax:1000000000000, yScaleID:'y1', backgroundColor:cssVar('--anno-trip'), borderWidth:0 }
+          }
+        }
+      },
+      interaction:{ intersect:false, mode:'nearest' },
+      scales:{
+        y:{ title:{display:true, text:'Flow (kg/s)', font:{weight:'600'}}, grid:{color:cssVar('--grid')}, ticks:{maxTicksLimit:6} },
+        y1:{ position:'right', title:{display:true, text:'Pressure (bar)', font:{weight:'600'}}, grid:{drawOnChartArea:false, color:cssVar('--grid')}, ticks:{maxTicksLimit:6} },
+        x:{ grid:{color:cssVar('--grid')}, ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:8 } }
+      }
+    }
+  });
+
+  window.vibChart = new Chart($('#vibration').getContext('2d'),{
+    type:'line',
+    data:{labels:[],datasets:[
+      {label:'Axial (mm/s)', data:[], borderColor:cssVar('--c-ax')},
+      {label:'Vertical (mm/s)', data:[], borderColor:cssVar('--c-ve')},
+      {label:'Horizontal (mm/s)', data:[], borderColor:cssVar('--c-ho'), borderDash:[6,4]}
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false, spanGaps:true,
+      plugins:{
+        legend:{ position:'top', labels:{ usePointStyle:true, boxWidth:10 } },
+        decimation:{ enabled:true, algorithm:'lttb', samples:200 },
+        zoom:{ zoom:{ wheel:{enabled:true}, pinch:{enabled:true}, mode:'x' }, pan:{enabled:true, mode:'x'} },
+        annotation:{
+          annotations:{
+            vib_warn_box:{ type:'box', yMin:3.5, yMax:7.1, xMin:-1000000000000, xMax:1000000000000, backgroundColor:cssVar('--anno-warn'), borderWidth:0 },
+            vib_trip_box:{ type:'box', yMin:7.1, yMax:100, xMin:-1000000000000, xMax:1000000000000, backgroundColor:cssVar('--anno-trip'), borderWidth:0 },
+            vib_warn_line:{ type:'line', yMin:3.5, yMax:3.5, borderColor:'rgba(245,158,11,.9)', borderDash:[6,4], borderWidth:1.2,
+                            label:{enabled:true, content:'Warn 3.5', backgroundColor:'rgba(245,158,11,.12)'} },
+            vib_trip_line:{ type:'line', yMin:7.1, yMax:7.1, borderColor:'rgba(239,68,68,.9)', borderDash:[6,4], borderWidth:1.2,
+                            label:{enabled:true, content:'Trip 7.1', backgroundColor:'rgba(239,68,68,.12)'} }
+          }
+        }
+      },
+      interaction:{ intersect:false, mode:'nearest' },
+      scales:{
+        y:{ title:{display:true, text:'mm/s'}, grid:{color:cssVar('--grid')}, ticks:{maxTicksLimit:6} },
+        x:{ grid:{color:cssVar('--grid')}, ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:8 } }
+      }
+    }
+  });
+
+  // compressor map
+  function genSpeedCurve(rpm){
+    var pts=[], f, head;
+    for (f=20; f<=40; f+=1){ head = (rpm/50) - 0.35*(f-30)*(f-30); pts.push({x:f, y:head}); }
+    return pts;
+  }
+  function genSurgeLine(){
+    var pts=[], f;
+    for (f=20; f<=40; f+=1){ pts.push({x:f, y:(f<26? 250: 220)}); }
+    return pts;
+  }
+  window.mapChart = new Chart($('#map').getContext('2d'),{
+    type:'scatter',
+    data:{ datasets:[
+      {label:'7000 rpm', data:genSpeedCurve(7000), showLine:true, borderWidth:1.6, pointRadius:0, borderColor:'#3b82f6'},
+      {label:'7800 rpm', data:genSpeedCurve(7800), showLine:true, borderWidth:2.0, pointRadius:0, borderColor:'#fb923c'},
+      {label:'8500 rpm', data:genSpeedCurve(8500), showLine:true, borderWidth:1.6, pointRadius:0, borderColor:'#a78bfa'},
+      {label:'Surge line', data:genSurgeLine(), showLine:true, borderWidth:2, borderDash:[6,4], pointRadius:0, borderColor:'#f97316'},
+      {label:'Current', data:[{x:null,y:null}], showLine:false, pointRadius:4, borderColor:'#0ea5e9', backgroundColor:'#0ea5e9'}
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{ position:'top', labels:{ usePointStyle:true, boxWidth:10 } },
+                zoom:{ zoom:{ wheel:{enabled:true}, pinch:{enabled:true}, mode:'xy' }, pan:{enabled:true, mode:'xy'} } },
+      interaction:{ intersect:false, mode:'nearest' },
+      scales:{
+        x:{ type:'linear', title:{display:true,text:'Flow (kg/s)'}, grid:{color:cssVar('--grid')}, ticks:{maxTicksLimit:7} },
+        y:{ type:'linear', title:{display:true,text:'Head (kJ/kg)'}, grid:{color:cssVar('--grid')}, ticks:{maxTicksLimit:7} }
+      }
+    }
+  });
+  (function setMapBounds(){
+    var dsets = mapChart.data.datasets.slice(0,4), xs=[], ys=[];
+    dsets.forEach(function(ds){ ds.data.forEach(function(p){ xs.push(p.x); ys.push(p.y); }); });
+    var minX=Math.min.apply(Math,xs), maxX=Math.max.apply(Math,xs);
+    var minY=Math.min.apply(Math,ys), maxY=Math.max.apply(Math,ys);
+    var padX=(maxX-minX)*0.08||1, padY=(maxY-minY)*0.08||1;
+    mapChart.options.scales.x.min=minX-padX; mapChart.options.scales.x.max=maxX+padX;
+    mapChart.options.scales.y.min=Math.max(0,minY-padY); mapChart.options.scales.y.max=maxY+padY;
+    mapChart.update('none');
+  })();
+
+  // ----- live data, history, scrubber/replay -----
+  var socket = io();          // same-origin
+  var paused = false;
+  var liveMode = true;
+  var replayTimer = null;
+
+  var hist = [];              // array of {ts, o, h, head}
+  var MAX_HIST = 1800;        // ~30 minutes at 1 Hz
+  var WIN = 600;              // display window size
+
+  function pushPoint(ch, di, label, val){
+    ch.data.labels.push(label);
+    ch.data.datasets[di].data.push(val);
+    if (ch.data.labels.length > WIN){
+      ch.data.labels.shift();
+      ch.data.datasets.forEach(function(d){ d.data.shift(); });
+    }
+    ch.update('none');
+  }
+
+  function resetChartZoom(ch){
+    if (typeof ch.resetZoom === 'function') { ch.resetZoom(); return; }
+    var s = ch.options.scales || {};
+    ['x','y','y1'].forEach(function(k){
+      if (s[k]) { delete s[k].min; delete s[k].max; }
+    });
+    ch.update();
+  }
+
+  function redrawWindow(endIdx){
+    var start = Math.max(0, endIdx - WIN + 1);
+    var slice = hist.slice(start, endIdx + 1);
+    var labels = slice.map(function(s){ return new Date(s.ts).toLocaleTimeString(); });
+
+    function setSeries(chart){
+      chart.data.labels = labels;
+      chart.data.datasets.forEach(function(d){ d.data.length = 0; });
+      for (var i=0;i<slice.length;i++){
+        var s = slice[i];
+        if (chart === processChart){
+          chart.data.datasets[0].data.push(s.o.flow);
+          chart.data.datasets[1].data.push(s.o.P1);
+          chart.data.datasets[2].data.push(s.o.P2);
+        } else {
+          chart.data.datasets[0].data.push(s.h.v_ax);
+          chart.data.datasets[1].data.push(s.h.v_vert);
+          chart.data.datasets[2].data.push(s.h.v_horz);
         }
       }
-    });
+      chart.update('none');
+    }
+    setSeries(processChart);
+    setSeries(vibChart);
+    var last = hist[endIdx];
+    if (last){
+      mapChart.data.datasets[4].data[0] = {x:last.o.flow, y:last.head};
+      mapChart.update('none');
+    }
+  }
 
-    const vibChart = new Chart(document.getElementById('vibration').getContext('2d'), {
-      type:'line',
-      data:{ labels:[], datasets:[
-        { label:'Axial (mm/s)', data:[], tension:.25, fill:false },
-        { label:'Vertical (mm/s)', data:[], tension:.25, fill:false },
-        { label:'Horizontal (mm/s)', data:[], tension:.25, fill:false, borderDash:[6,4] },
-      ]},
-      options:{
-        maintainAspectRatio:false,
-        plugins:{ legend:{ position:'top', labels:{ usePointStyle:true, boxWidth:10 } } },
-        scales:{ y:{ title:{ display:true, text:'mm/s' } },
-                 x:{ ticks:{ maxRotation:45, autoSkip:true, maxTicksLimit:14 } } }
-      }
-    });
+  function applySnapshot(s){
+    if (!s || !s.oper || !s.health) return;
+    var o=s.oper, h=s.health;
 
-    function refreshChartTheme(){
-      const text = cssVar('--text'), grid = cssVar('--grid');
-      const cFlow = cssVar('--c-flow'), cP1 = cssVar('--c-p1'), cP2 = cssVar('--c-p2');
-      const cAx   = cssVar('--c-ax'), cVe = cssVar('--c-ve'), cHo = cssVar('--c-ho');
-      Chart.defaults.color = text;
+    var cr = (o.P2>0 && o.P1>0) ? (o.P2/o.P1) : 0;
+    $('#cr').textContent = cr ? cr.toFixed(2) : '-';
+    $('#flow').textContent = (o.flow!=null) ? o.flow.toFixed(2) : '-';
+    $('#pp').textContent = (o.P1!=null && o.P2!=null) ? (o.P1.toFixed(2) + ' / ' + o.P2.toFixed(2)) : '-';
+    $('#tt').textContent = (o.T1!=null && o.T2!=null) ? (o.T1.toFixed(1) + ' / ' + o.T2.toFixed(1)) : '-';
+    $('#speed').textContent = (o.speed!=null) ? o.speed.toFixed(0) : '-';
+    $('#valve').textContent = (o.valve!=null) ? o.valve.toFixed(0) : '-';
 
-      processChart.data.datasets[0].borderColor = cFlow;
-      processChart.data.datasets[1].borderColor = cP1;
-      processChart.data.datasets[2].borderColor = cP2;
-      processChart.options.scales.x.grid = { color:grid };
-      processChart.options.scales.y.grid = { color:grid };
-      processChart.options.scales.y1.grid = { color:grid };
-      processChart.options.plugins.legend.labels.color = text;
+    $('#oilp').textContent = (h.oil_pressure!=null) ? h.oil_pressure.toFixed(2) : '-';
+    $('#bt').textContent = (h.bearing_temp!=null && h.oil_temp!=null) ? (h.bearing_temp.toFixed(1) + ' / ' + h.oil_temp.toFixed(1)) : '-';
+    $('#seal').textContent = (h.seal_leak!=null) ? h.seal_leak.toFixed(2) : '-';
 
-      vibChart.data.datasets[0].borderColor = cAx;
-      vibChart.data.datasets[1].borderColor = cVe;
-      vibChart.data.datasets[2].borderColor = cHo;
-      vibChart.options.scales.x.grid = { color:grid };
-      vibChart.options.scales.y.grid = { color:grid };
-      vibChart.options.plugins.legend.labels.color = text;
+    var sm = (o.P2 && o.P1) ? ((o.P2 - o.P1) / Math.max(0.1,o.P2)) * 100 : 0;
+    $('#sm').textContent = sm.toFixed(1) + ' %';
+    $('#sm_status').className = 'subtle ' + (sm < 10 ? 'warn' : 'ok');
 
-      processChart.update(); vibChart.update();
+    $('#vib').textContent = h.v_ax.toFixed(2) + ' / ' + h.v_vert.toFixed(2) + ' / ' + h.v_horz.toFixed(2);
+    $('#vib_status').className = 'subtle ' + ((h.v_ax<3.5 && h.v_vert<3.5 && h.v_horz<3.5) ? 'ok' : 'warn');
+
+    var headIdx = (o.P2 - o.P1) * 40;
+    $('#head').textContent = headIdx > 0 ? headIdx.toFixed(2) : '-';
+    $('#eff').textContent = Math.max(60, 95 - (sm < 10 ? 20 : 0) - ((h.v_ax<3.5 && h.v_vert<3.5 && h.v_horz<3.5) ? 0 : 10)).toFixed(0);
+
+    // hist & charts
+    var now = Date.now();
+    hist.push({ts: now, o: {flow:o.flow, P1:o.P1, P2:o.P2, speed:o.speed, valve:o.valve, T1:o.T1, T2:o.T2},
+               h: {v_ax:h.v_ax, v_vert:h.v_vert, v_horz:h.v_horz, oil_pressure:h.oil_pressure, bearing_temp:h.bearing_temp, oil_temp:h.oil_temp, seal_leak:h.seal_leak},
+               head: headIdx});
+    if (hist.length > MAX_HIST) hist.shift();
+
+    // keep scrubber updated
+    var scrub = $('#scrub');
+    scrub.max = Math.max(0, hist.length - 1);
+    if (liveMode) {
+      scrub.value = scrub.max;
+      $('#scrub-label').textContent = 'Live';
+    } else if (hist.length) {
+      $('#scrub-label').textContent = 't = ' + new Date(hist[+scrub.value].ts).toLocaleTimeString();
     }
 
-    // Theme toggle (call AFTER charts exist)
-    function isDark(){ return document.documentElement.getAttribute('data-theme')==='dark'; }
-    function setTheme(dark){
-      document.documentElement.setAttribute('data-theme', dark ? 'dark' : '');
-      localStorage.setItem('wgc_theme', dark ? 'dark' : 'light');
-      document.getElementById('btn-theme').textContent = dark ? '☀️ Light' : '🌙 Dark';
-      refreshChartTheme();
+    if (!paused && liveMode){
+      var ts = new Date().toLocaleTimeString();
+      pushPoint(processChart, 0, ts, o.flow);
+      pushPoint(processChart, 1, ts, o.P1);
+      pushPoint(processChart, 2, ts, o.P2);
+
+      pushPoint(vibChart, 0, ts, h.v_ax);
+      pushPoint(vibChart, 1, ts, h.v_vert);
+      pushPoint(vibChart, 2, ts, h.v_horz);
+
+      mapChart.data.datasets[4].data[0] = {x:o.flow, y:headIdx};
+      mapChart.update('none');
     }
-    const saved = localStorage.getItem('wgc_theme');
-    setTheme(saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.getElementById('btn-theme').onclick = ()=> setTheme(!isDark());
+  }
 
-    // Streaming + UI state
-    let paused = false, MAX = 120, lastUpdate = 0;
-    let running = (window.__WGC__ && window.__WGC__.running) !== false;  // default true
+  if (window.__WGC__) applySnapshot(window.__WGC__);
 
-    function setRunButtons(on){
-      running = !!on;
-      document.getElementById('btn-start').disabled = running;
-      document.getElementById('btn-stop').disabled  = !running;
-    }
-    setRunButtons(running);
-
-    function pushPoint(chart, idx, label, val){
-      chart.data.labels.push(label);
-      chart.data.datasets[idx].data.push(val);
-      if (chart.data.labels.length > MAX){
-        chart.data.labels.shift();
-        chart.data.datasets.forEach(d=>d.data.shift());
-      }
-      chart.update();
-    }
-
-    function renderAlarms(list){
-      const ul = document.getElementById('alarms');
-      ul.innerHTML = '';
-      (list || []).forEach(a => {
-        const li = document.createElement('li');
-        li.textContent = `${a.type}: ${a.message}`;
-        if ((a.severity || '').toLowerCase() === 'trip') li.style.color = 'var(--warn)';
-        ul.appendChild(li);
-      });
-    }
-
-    function applySnapshot(data){
-      const oper = data.oper || {}, k = data.kpi || {}, h = data.health || {};
-      const nz = v => (v ?? 0);
-
-      setText('cr',  (nz(k.compression_ratio)).toFixed(2));
-      setText('flow',(nz(oper.flow)).toFixed(2));
-      setText('pp',  `${nz(oper.P1).toFixed(2)} / ${nz(oper.P2).toFixed(2)}`);
-      setText('tt',  `${nz(oper.T1).toFixed(1)} / ${nz(oper.T2).toFixed(1)}`);
-      setText('speed',(nz(oper.speed)).toFixed(0));
-      setText('valve',(nz(oper.valve)).toFixed(0));
-      setText('sm',  `${nz(k.surge_margin_pct).toFixed(1)} %`);
-      setText('head',(nz(k.head_index_norm)).toFixed(2));
-      setText('eff', (nz(k.efficiency_index)).toFixed(0));
-      setText('oilp',(nz(h.lube_oil_pressure)).toFixed(2));
-      setText('bt',  `${nz(h.bearing_temp).toFixed(1)} / ${nz(h.oil_temp).toFixed(1)}`);
-      setText('seal',(nz(h.seal_leakage)).toFixed(2));
-      setText('vib', `${nz(h.vib_axial).toFixed(2)} / ${nz(h.vib_vert).toFixed(2)} / ${nz(h.vib_horz).toFixed(2)}`);
-
-      const smEl = document.getElementById('sm_status');
-      const smv = nz(k.surge_margin_pct);
-      smEl.textContent = (smv < 10) ? 'Low Surge Margin' : 'OK';
-      smEl.className = (smv < 10) ? 'warn subtle' : 'ok subtle';
-
-      const vibEl = document.getElementById('vib_status');
-      const bands = k.vibration || {};
-      const anyWarn = ['axial','vertical','horizontal'].some(ax => (bands[ax]||{}).band === 'Warning');
-      const anyTrip = ['axial','vertical','horizontal'].some(ax => (bands[ax]||{}).band === 'Trip');
-      vibEl.textContent = anyTrip ? 'Vibration Trip' : (anyWarn ? 'Vibration Warning' : 'OK');
-      vibEl.className = (anyTrip || anyWarn) ? 'warn subtle' : 'ok subtle';
-
-      renderAlarms(k.alarms || []);
-
-      // If stopped, auto-pause charts
-      if (!running) paused = true;
-
-      if (!paused){
-        const ts = new Date().toLocaleTimeString();
-        pushPoint(processChart, 0, ts, nz(oper.flow));
-        pushPoint(processChart, 1, ts, nz(oper.P1));
-        pushPoint(processChart, 2, ts, nz(oper.P2));
-        pushPoint(vibChart,     0, ts, nz(h.vib_axial));
-        pushPoint(vibChart,     1, ts, nz(h.vib_vert));
-        pushPoint(vibChart,     2, ts, nz(h.vib_horz));
-      }
-    }
-
-    // Socket.io
-    console.log('[WS] client version', window.io && window.io.version);
-    const socket = io({ transports:["websocket","polling"] });
-    socket.on('connect', () => console.log('[WS] connected'));
-
-    socket.on('update_wgc', data => {
-      lastUpdate = Date.now();
-      if (typeof data.running === 'boolean') setRunButtons(data.running);
-      applySnapshot(data);
-    });
-
-    // React immediately to server commands
-    socket.on('wgc_command', msg => {
-      if (!msg) return;
-      if (msg.action === 'stop'){ setRunButtons(false); paused = true; }
-      if (msg.action === 'start'){ setRunButtons(true); /* user decides resume */ }
-      // if msg.action === 'set', you could reflect sliders if desired
-    });
-
-    // Controls
-    document.getElementById('btn-pause').onclick  = ()=> paused = true;
-    document.getElementById('btn-resume').onclick = ()=> paused = false;
-    document.getElementById('btn-clear').onclick  = ()=>{
-      [processChart, vibChart].forEach(ch => { ch.data.labels=[]; ch.data.datasets.forEach(d=>d.data=[]); ch.update(); });
-      fetch('/api/wgc/clear', {method:'POST'});
-    };
-    document.getElementById('btn-csv').onclick    = ()=> window.location = '/api/wgc/history.csv';
-
-    // Start/Stop emit + optimistic UI (Start auto-resumes plotting)
-    document.getElementById('btn-stop').onclick = ()=>{
-      socket.emit('wgc_command', {action:'stop'});
-      setRunButtons(false);
-      paused = true;
-    };
-    document.getElementById('btn-start').onclick = ()=>{
-      socket.emit('wgc_command', {action:'start'});
-      setRunButtons(true);
-      paused = false;            // <-- auto-resume charts on Start
-    };
-
-    // Export
-    const dl = (dataUrl, name) => { const a = document.createElement('a'); a.href=dataUrl; a.download=name; a.click(); };
-    document.getElementById('btn-png-process').onclick   = ()=> dl(processChart.toBase64Image(), 'wgc_process.png');
-    document.getElementById('btn-png-vibration').onclick = ()=> dl(vibChart.toBase64Image(), 'wgc_vibration.png');
-    document.getElementById('btn-pdf').onclick = ()=>{
-      const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF({orientation:'portrait', unit:'pt', format:'a4'});
-      const margin = 24, pageW = pdf.internal.pageSize.getWidth(), imgW = pageW - 2*margin;
-      const add = (chart, y)=>{ const h = imgW * (chart.canvas.height / chart.canvas.width);
-                                pdf.addImage(chart.toBase64Image(), 'PNG', margin, y, imgW, h); return y + h + 16; };
-      let y = margin; y = add(processChart, y);
-      const pageH = pdf.internal.pageSize.getHeight();
-      if (y > pageH - margin){ pdf.addPage(); y = margin; }
-      add(vibChart, y); pdf.save('wgc_charts.pdf');
-    };
-
-    // Setpoints
-    const speedEl = document.getElementById('sp-speed'), speedVal = document.getElementById('sp-speed-val');
-    const valveEl = document.getElementById('sp-valve'), valveVal = document.getElementById('sp-valve-val');
-    const reflect = ()=>{ speedVal.textContent = speedEl.value; valveVal.textContent = valveEl.value; };
-    speedEl.oninput = reflect; valveEl.oninput = reflect; reflect();
-    document.getElementById('btn-apply').onclick = ()=>{
-      const payload = {action:'set', speed:Number(speedEl.value), valve:Number(valveEl.value)};
-      socket.emit('wgc_command', payload);
-    };
-
-    // Polling fallback (if WS idle)
-    async function pollOnce(){
-      try{
-        const r = await fetch('/api/wgc/snapshot', { cache:'no-store' });
-        if (r.ok){ const d = await r.json(); if (typeof d.running === 'boolean') setRunButtons(d.running); applySnapshot(d); }
-      }catch(_){}
-    }
-    setInterval(() => { if (Date.now() - lastUpdate > 3000) pollOnce(); }, 2000);
-
-    // Bootstrap
-    applySnapshot(window.__WGC__ || {});
-    pollOnce();
+  // socket events (badge strictly from server flags/acks)
+  socket.on('connect', function(){ /* no-op */ });
+  socket.on('wgc_data', function(payload){
+    if (payload && typeof payload.running === 'boolean') setBadge(payload.running);
+    var s = payload && payload.wgc ? payload.wgc : payload;
+    applySnapshot(s);
   });
-  </script>
+  socket.on('wgc_ack', function(msg){
+    if (!msg) return;
+    if (typeof msg.running === 'boolean') setBadge(msg.running);
+  });
+
+  // buttons
+  $('#btn-pause').onclick = function(){ paused = true; };
+  $('#btn-resume').onclick = function(){ paused = false; };
+  $('#btn-clear').onclick = function(){
+    [processChart, vibChart].forEach(function(ch){
+      ch.data.labels.length = 0;
+      ch.data.datasets.forEach(function(d){ d.data.length = 0; });
+      // also clear zoom manually
+      resetChartZoom(ch);
+    });
+  };
+  $('#btn-reset-zoom-proc').onclick = function(){ resetChartZoom(processChart); };
+  $('#btn-reset-zoom-vib').onclick  = function(){ resetChartZoom(vibChart); };
+
+  $('#btn-start').onclick = function(){ paused = false; liveMode = true; socket.emit('wgc_command', {action:'start'}); };
+  $('#btn-stop').onclick  = function(){ socket.emit('wgc_command', {action:'stop'}); };
+
+  var spSpeed = $('#sp-speed'), spValve = $('#sp-valve');
+  spSpeed.oninput = function(){ $('#sp-speed-val').textContent = spSpeed.value; };
+  spValve.oninput = function(){ $('#sp-valve-val').textContent = spValve.value; };
+  $('#btn-apply').onclick = function(){
+    socket.emit('wgc_command', {action:'setpoints', speed:Number(spSpeed.value), valve:Number(spValve.value)});
+  };
+
+  // scrubber / replay
+  $('#btn-live').onclick = function(){
+    liveMode = true; paused = false;
+    var scrub = $('#scrub');
+    scrub.value = scrub.max;
+    $('#scrub-label').textContent = 'Live';
+  };
+  $('#scrub').oninput = function(){
+    liveMode = false; paused = true;
+    var idx = Number($('#scrub').value) || 0;
+    if (hist.length) redrawWindow(Math.min(idx, hist.length - 1));
+    $('#scrub-label').textContent = hist.length ? ('t = ' + new Date(hist[idx].ts).toLocaleTimeString()) : 't = -';
+  };
+  var replayTimer = null;
+  $('#btn-replay').onclick = function(){
+    if (!hist.length) return;
+    liveMode = false; paused = true;
+    var scrub = $('#scrub');
+    var i = Math.max(0, hist.length - Math.min(hist.length, WIN));
+    clearInterval(replayTimer);
+    redrawWindow(i);
+    scrub.value = i;
+    replayTimer = setInterval(function(){
+      i++;
+      if (i >= hist.length){ clearInterval(replayTimer); return; }
+      scrub.value = i;
+      redrawWindow(i);
+      $('#scrub-label').textContent = 't = ' + new Date(hist[i].ts).toLocaleTimeString();
+    }, 120);
+  };
+  $('#btn-replay-stop').onclick = function(){ if (replayTimer) clearInterval(replayTimer); };
+
+  // exports
+  $('#btn-png-process').onclick   = function(){ downloadCanvasPNG(processChart, 'process.png'); };
+  $('#btn-png-vibration').onclick = function(){ downloadCanvasPNG(vibChart, 'vibration.png'); };
+  $('#btn-csv').onclick = downloadCSV;
+  $('#btn-pdf').onclick = exportChartsPDF;
+  $('#btn-daily').onclick = exportDailyPDF;
+
+  function downloadCanvasPNG(chart, filename){
+    var url = chart.canvas.toDataURL('image/png', 1.0);
+    var a = document.createElement('a'); a.href=url; a.download=filename; a.click();
+  }
+  function val(ch, di, i){ var d=ch.data.datasets[di].data; return (i<d.length && d[i]!=null) ? d[i] : ''; }
+  function downloadCSV(){
+    var rows = [['time','flow_kgps','p1_bar','p2_bar','v_ax','v_vert','v_horz']];
+    var n = processChart.data.labels.length;
+    for (var i=0;i<n;i++){
+      var t = processChart.data.labels[i] || '';
+      rows.push([t, val(processChart,0,i), val(processChart,1,i), val(processChart,2,i),
+                   val(vibChart,0,i), val(vibChart,1,i), val(vibChart,2,i)]);
+    }
+    var blob = new Blob([rows.map(function(r){return r.join(',');}).join('\n')], {type:'text/csv'});
+    var a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='wgc_timeseries.csv'; a.click();
+  }
+  function exportChartsPDF(){
+    var jsPDF = window.jspdf && window.jspdf.jsPDF; if (!jsPDF) return;
+    var pdf = new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(16);
+    pdf.text('Wet Gas Compressor - Process and Vibration', 40, 40);
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(10);
+    pdf.text('Generated: ' + new Date().toLocaleString(), 40, 58);
+    var pImg = processChart.canvas.toDataURL('image/png',1.0);
+    var vImg = vibChart.canvas.toDataURL('image/png',1.0);
+    pdf.addImage(pImg, 'PNG', 40, 80, 500, 180);
+    pdf.addImage(vImg, 'PNG', 40, 280, 500, 180);
+    pdf.save('wgc_charts.pdf');
+  }
+  function exportDailyPDF(){
+    var jsPDF = window.jspdf && window.jspdf.jsPDF; if (!jsPDF) return;
+    var pdf = new jsPDF({orientation:'portrait', unit:'pt', format:'a4'});
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(16);
+    pdf.text('WGC Daily Report', 40, 40);
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(10);
+    pdf.text('Generated: ' + new Date().toLocaleString(), 40, 58);
+
+    var N = Math.min(hist.length, 1800);
+    function avg(get){ var s=0,c=0; for (var i=hist.length-N;i<hist.length;i++){ if(i>=0){ s+=get(hist[i]); c++; } } return c? (s/c):0; }
+    var k = {
+      flow: avg(function(r){return r.o.flow||0;}),
+      P1:   avg(function(r){return r.o.P1||0;}),
+      P2:   avg(function(r){return r.o.P2||0;}),
+      speed:avg(function(r){return r.o.speed||0;}),
+      vib:  avg(function(r){return (r.h.v_ax+r.h.v_vert+r.h.v_horz)/3;})
+    };
+
+    var warnP2=0, tripP2=0, vibWarn=0, vibTrip=0;
+    for (var i=Math.max(0,hist.length-N); i<hist.length; i++){
+      var r = hist[i];
+      if (r.o.P2>9.5) warnP2++;
+      if (r.o.P2>10.5) tripP2++;
+      var anyWarn = (r.h.v_ax>3.5 || r.h.v_vert>3.5 || r.h.v_horz>3.5);
+      var anyTrip = (r.h.v_ax>7.1 || r.h.v_vert>7.1 || r.h.v_horz>7.1);
+      if (anyWarn) vibWarn++;
+      if (anyTrip) vibTrip++;
+    }
+
+    var y=90;
+    pdf.setFont('helvetica','bold'); pdf.text('KPIs (averages over last ' + N + ' samples):', 40, y); y+=18;
+    pdf.setFont('helvetica','normal');
+    pdf.text('Flow (kg/s): ' + k.flow.toFixed(2), 40, y); y+=16;
+    pdf.text('P1/P2 (bar): ' + k.P1.toFixed(2) + ' / ' + k.P2.toFixed(2), 40, y); y+=16;
+    pdf.text('Speed (rpm): ' + k.speed.toFixed(0), 40, y); y+=16;
+    pdf.text('Vibration avg (mm/s): ' + k.vib.toFixed(2), 40, y); y+=22;
+
+    pdf.setFont('helvetica','bold'); pdf.text('Alarms (counts in window):', 40, y); y+=18;
+    pdf.setFont('helvetica','normal');
+    pdf.text('P2 > 9.5 (warn): ' + warnP2, 40, y); y+=16;
+    pdf.text('P2 > 10.5 (trip): ' + tripP2, 40, y); y+=16;
+    pdf.text('Vibration warn (>3.5): ' + vibWarn, 40, y); y+=16;
+    pdf.text('Vibration trip (>7.1): ' + vibTrip, 40, y); y+=22;
+
+    var img = processChart.canvas.toDataURL('image/png',1.0);
+    pdf.addImage(img, 'PNG', 40, y, 515, 180);
+
+    pdf.save('wgc_daily_report.pdf');
+  }
+
+  // final theme sync
+  refreshChartTheme();
+})();
+</script>
 </body>
 </html>
 
