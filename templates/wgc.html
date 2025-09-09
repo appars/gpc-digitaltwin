@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Digital Twin — Wet Gas Compressor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <!-- Socket.IO client (PINNED & COMPATIBLE) -->
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js" crossorigin="anonymous"></script>
+  <!-- Chart.js + jsPDF -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7fb; --card:#ffffff; --text:#0f172a; --muted:#6b7280; --border:#e5e7eb;
+      --ok:#16a34a; --warn:#b91c1c; --brand:#0ea5e9; --grid: rgba(0,0,0,.06);
+      --c-flow:#1f77b4; --c-p1:#e67e22; --c-p2:#8e44ad; --c-ax:#2563eb; --c-ve:#e11d48; --c-ho:#f59e0b;
+    }
+    html[data-theme="dark"]{
+      --bg:#0b1220; --card:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --border:#1f2937;
+      --ok:#22c55e; --warn:#ef4444; --brand:#38bdf8; --grid: rgba(255,255,255,.10);
+      --c-flow:#60a5fa; --c-p1:#f59e0b; --c-p2:#c084fc; --c-ax:#93c5fd; --c-ve:#f87171; --c-ho:#fbbf24;
+    }
+    *{ box-sizing:border-box }
+    body{ margin:0; background:var(--bg); color:var(--text);
+          font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+    .wrap{ max-width:1200px; margin:24px auto; padding:0 18px; }
+    .topbar{ display:flex; align-items:center; justify-content:space-between; margin:6px 0 14px }
+    .title{ font-size:22px; font-weight:700 }
+    .top-actions{ display:flex; gap:10px; align-items:center }
+    .toggle{ padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer }
+
+    .card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow:0 6px 16px rgba(0,0,0,.04); }
+    .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+    .metric{ background:color-mix(in oklab, var(--card) 85%, var(--bg));
+             border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+    .label{ font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+    .value{ font-size:28px; font-weight:600; margin-top:2px; }
+    .ok{ color:var(--ok); } .warn{ color:var(--warn); font-weight:700 }
+    .controls{ display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 }
+    button{ padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer }
+    button.brand{ background:var(--brand); color:#fff; border-color:var(--brand) }
+    button:active{ transform:translateY(1px) }
+    .setpoints .metric{ background:var(--card) }
+    .chart-card{ padding:12px; }
+    canvas{ background:var(--card); border:1px solid var(--border); border-radius:10px; }
+    ul{ margin:.4rem 0 0 1.1rem }
+    .subtle{ color:var(--muted); font-size:13px }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="title">Digital Twin for Wet Gas Compressor — Real-Time Monitoring &amp; Optimization</div>
+      <div class="top-actions">
+        <button id="btn-theme" class="toggle" title="Toggle Dark/Light">🌙 Dark</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <!-- KPIs -->
+      <div class="grid">
+        <div class="metric"><div class="label">Compression Ratio</div><div id="cr" class="value">—</div></div>
+        <div class="metric"><div class="label">Flow (kg/s)</div><div id="flow" class="value">—</div></div>
+        <div class="metric"><div class="label">P₁ / P₂ (bar)</div><div id="pp" class="value">—</div></div>
+        <div class="metric"><div class="label">T₁ / T₂ (K)</div><div id="tt" class="value">—</div></div>
+        <div class="metric"><div class="label">Shaft Speed (rpm)</div><div id="speed" class="value">—</div></div>
+        <div class="metric"><div class="label">Valve (%)</div><div id="valve" class="value">—</div><div id="sm_status" class="ok subtle">OK</div></div>
+
+        <div class="metric"><div class="label">Surge Margin</div><div id="sm" class="value">—</div></div>
+        <div class="metric"><div class="label">Head Index</div><div id="head" class="value">—</div></div>
+        <div class="metric"><div class="label">Efficiency Index</div><div id="eff" class="value">—</div></div>
+
+        <div class="metric"><div class="label">Lube Oil (bar)</div><div id="oilp" class="value">—</div></div>
+        <div class="metric"><div class="label">Bearing / Oil Temp (K)</div><div id="bt" class="value">—</div></div>
+        <div class="metric"><div class="label">Seal Leakage (L/min)</div><div id="seal" class="value">—</div></div>
+
+        <div class="metric"><div class="label">Vibration (Ax/V/H, mm/s)</div><div id="vib" class="value">—</div><div id="vib_status" class="ok subtle">OK</div></div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls">
+        <button id="btn-pause">Pause Charts</button>
+        <button id="btn-resume">Resume Charts</button>
+        <button id="btn-clear">Clear Charts</button>
+        <button id="btn-csv">Download CSV</button>
+        <button id="btn-png-process">PNG: Process</button>
+        <button id="btn-png-vibration">PNG: Vibration</button>
+        <button id="btn-pdf" class="brand">PDF: Both Charts</button>
+        <button id="btn-stop">Stop WGC</button>
+        <button id="btn-start" class="brand">Start WGC</button>
+      </div>
+
+      <!-- Setpoints -->
+      <div class="card setpoints" style="margin:12px 0;">
+        <div class="label">Setpoints</div>
+        <div class="grid">
+          <div class="metric">
+            <div class="label">Speed (rpm)</div>
+            <input id="sp-speed" type="range" min="6000" max="9000" value="7800" step="10" style="width:100%">
+            <div class="subtle">Value: <span id="sp-speed-val">7800</span></div>
+          </div>
+          <div class="metric">
+            <div class="label">Valve (%)</div>
+            <input id="sp-valve" type="range" min="0" max="100" value="65" step="1" style="width:100%">
+            <div class="subtle">Value: <span id="sp-valve-val">65</span></div>
+          </div>
+          <div class="metric" style="display:flex;align-items:end;">
+            <button id="btn-apply" class="brand">Apply Setpoints</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="chart-card"><canvas id="process" height="280"></canvas></div>
+      <div class="chart-card"><canvas id="vibration" height="230"></canvas></div>
+
+      <!-- Alarms -->
+      <div class="metric" style="margin-top:12px;">
+        <div class="label">Active Alarms</div>
+        <ul id="alarms"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Error logger + server snapshot -->
+  <script>
+    window.onerror = (m, s, l, c, e) => console.error('[JS ERROR]', m, s+':'+l, e);
+    window.__WGC__ = {{ wgc | tojson | safe }};
+  </script>
+
+  <script>
+  document.addEventListener('DOMContentLoaded', () => {
+    console.log('[BOOT] snapshot', window.__WGC__);
+
+    // Helpers
+    function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+    const setText = (id, txt) => document.getElementById(id).textContent = txt;
+
+    // Charts
+    Chart.defaults.font.family = 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+    Chart.defaults.font.size = 13;
+    Chart.defaults.elements.line.borderWidth = 2.6;
+    Chart.defaults.elements.point.radius = 2.5;
+    Chart.defaults.elements.point.hoverRadius = 5;
+    Chart.defaults.elements.point.hitRadius = 10;
+
+    const processChart = new Chart(document.getElementById('process').getContext('2d'), {
+      type:'line',
+      data:{ labels:[], datasets:[
+        { label:'Flow (kg/s)', data:[], tension:.25, fill:false },
+        { label:'P1 (bar)',   data:[], tension:.25, fill:false, yAxisID:'y1' },
+        { label:'P2 (bar)',   data:[], tension:.25, fill:false, yAxisID:'y1', borderDash:[6,4] },
+      ]},
+      options:{
+        maintainAspectRatio:false,
+        plugins:{ legend:{ position:'top', labels:{ usePointStyle:true, boxWidth:10 } } },
+        scales:{
+          y:{  title:{ display:true, text:'Flow (kg/s)', font:{ weight:'600' } } },
+          y1:{ position:'right', title:{ display:true, text:'Pressure (bar)', font:{ weight:'600' } }, grid:{ drawOnChartArea:false } },
+          x:{  ticks:{ maxRotation:45, autoSkip:true, maxTicksLimit:12 } }
+        }
+      }
+    });
+
+    const vibChart = new Chart(document.getElementById('vibration').getContext('2d'), {
+      type:'line',
+      data:{ labels:[], datasets:[
+        { label:'Axial (mm/s)', data:[], tension:.25, fill:false },
+        { label:'Vertical (mm/s)', data:[], tension:.25, fill:false },
+        { label:'Horizontal (mm/s)', data:[], tension:.25, fill:false, borderDash:[6,4] },
+      ]},
+      options:{
+        maintainAspectRatio:false,
+        plugins:{ legend:{ position:'top', labels:{ usePointStyle:true, boxWidth:10 } } },
+        scales:{ y:{ title:{ display:true, text:'mm/s' } },
+                 x:{ ticks:{ maxRotation:45, autoSkip:true, maxTicksLimit:14 } } }
+      }
+    });
+
+    function refreshChartTheme(){
+      const text = cssVar('--text'), grid = cssVar('--grid');
+      const cFlow = cssVar('--c-flow'), cP1 = cssVar('--c-p1'), cP2 = cssVar('--c-p2');
+      const cAx   = cssVar('--c-ax'), cVe = cssVar('--c-ve'), cHo = cssVar('--c-ho');
+      Chart.defaults.color = text;
+
+      processChart.data.datasets[0].borderColor = cFlow;
+      processChart.data.datasets[1].borderColor = cP1;
+      processChart.data.datasets[2].borderColor = cP2;
+      processChart.options.scales.x.grid = { color:grid };
+      processChart.options.scales.y.grid = { color:grid };
+      processChart.options.scales.y1.grid = { color:grid };
+      processChart.options.plugins.legend.labels.color = text;
+
+      vibChart.data.datasets[0].borderColor = cAx;
+      vibChart.data.datasets[1].borderColor = cVe;
+      vibChart.data.datasets[2].borderColor = cHo;
+      vibChart.options.scales.x.grid = { color:grid };
+      vibChart.options.scales.y.grid = { color:grid };
+      vibChart.options.plugins.legend.labels.color = text;
+
+      processChart.update(); vibChart.update();
+    }
+
+    // Theme (after charts exist)
+    function isDark(){ return document.documentElement.getAttribute('data-theme')==='dark'; }
+    function setTheme(dark){
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : '');
+      localStorage.setItem('wgc_theme', dark ? 'dark' : 'light');
+      document.getElementById('btn-theme').textContent = dark ? '☀️ Light' : '🌙 Dark';
+      refreshChartTheme();
+    }
+    const saved = localStorage.getItem('wgc_theme');
+    setTheme(saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.getElementById('btn-theme').onclick = ()=> setTheme(!isDark());
+
+    // Streaming + UI
+    let paused = false, MAX = 120, lastUpdate = 0;
+
+    function pushPoint(chart, idx, label, val){
+      chart.data.labels.push(label);
+      chart.data.datasets[idx].data.push(val);
+      if (chart.data.labels.length > MAX){
+        chart.data.labels.shift();
+        chart.data.datasets.forEach(d=>d.data.shift());
+      }
+      chart.update();
+    }
+
+    function applySnapshot(data){
+      const oper = data.oper || {}, k = data.kpi || {}, h = data.health || {};
+      setText('cr',  (k.compression_ratio ?? 0).toFixed(2));
+      setText('flow',(oper.flow ?? 0).toFixed(2));
+      setText('pp',  `${(oper.P1 ?? 0).toFixed(2)} / ${(oper.P2 ?? 0).toFixed(2)}`);
+      setText('tt',  `${(oper.T1 ?? 0).toFixed(1)} / ${(oper.T2 ?? 0).toFixed(1)}`);
+      setText('speed',(oper.speed ?? 0).toFixed(0));
+      setText('valve',(oper.valve ?? 0).toFixed(0));
+      setText('sm',  `${(k.surge_margin_pct ?? 0).toFixed(1)} %`);
+      setText('head',(k.head_index_norm ?? 0).toFixed(2));
+      setText('eff', (k.efficiency_index ?? 0).toFixed(0));
+      setText('oilp',(h.lube_oil_pressure ?? 0).toFixed(2));
+      setText('bt',  `${(h.bearing_temp ?? 0).toFixed(1)} / ${(h.oil_temp ?? 0).toFixed(1)}`);
+      setText('seal',(h.seal_leakage ?? 0).toFixed(2));
+      setText('vib', `${(h.vib_axial ?? 0).toFixed(2)} / ${(h.vib_vert ?? 0).toFixed(2)} / ${(h.vib_horz ?? 0).toFixed(2)}`);
+
+      const smEl = document.getElementById('sm_status');
+      const smv = (k.surge_margin_pct ?? 100);
+      smEl.textContent = (smv < 10) ? 'Low Surge Margin' : 'OK';
+      smEl.className = (smv < 10) ? 'warn subtle' : 'ok subtle';
+
+      const vibEl = document.getElementById('vib_status');
+      const bands = k.vibration || {};
+      const anyWarn = ['axial','vertical','horizontal'].some(ax => (bands[ax]||{}).band === 'Warning');
+      const anyTrip = ['axial','vertical','horizontal'].some(ax => (bands[ax]||{}).band === 'Trip');
+      vibEl.textContent = anyTrip ? 'Vibration Trip' : (anyWarn ? 'Vibration Warning' : 'OK');
+      vibEl.className = (anyTrip || anyWarn) ? 'warn subtle' : 'ok subtle';
+
+      if (!paused){
+        const ts = new Date().toLocaleTimeString();
+        pushPoint(processChart, 0, ts, oper.flow ?? 0);
+        pushPoint(processChart, 1, ts, oper.P1 ?? 0);
+        pushPoint(processChart, 2, ts, oper.P2 ?? 0);
+        pushPoint(vibChart,     0, ts, h.vib_axial ?? 0);
+        pushPoint(vibChart,     1, ts, h.vib_vert  ?? 0);
+        pushPoint(vibChart,     2, ts, h.vib_horz  ?? 0);
+      }
+    }
+
+    // Socket.io
+    console.log('[WS] client version', window.io && window.io.version);
+    const socket = io({ transports:["websocket","polling"] });
+    socket.on('connect', () => console.log('[WS] connected'));
+    socket.on('update_wgc', data => { lastUpdate = Date.now(); console.log('[WS] update_wgc', data?.oper); applySnapshot(data); });
+
+    // Controls
+    document.getElementById('btn-pause').onclick  = ()=> paused = true;
+    document.getElementById('btn-resume').onclick = ()=> paused = false;
+    document.getElementById('btn-clear').onclick  = ()=>{
+      [processChart, vibChart].forEach(ch => { ch.data.labels=[]; ch.data.datasets.forEach(d=>d.data=[]); ch.update(); });
+      fetch('/api/wgc/clear', {method:'POST'});
+    };
+    document.getElementById('btn-csv').onclick    = ()=> window.location = '/api/wgc/history.csv';
+    document.getElementById('btn-stop').onclick   = ()=> socket.emit('wgc_command', {action:'stop'});
+    document.getElementById('btn-start').onclick  = ()=> socket.emit('wgc_command', {action:'start'});
+
+    // Export
+    const dl = (dataUrl, name) => { const a = document.createElement('a'); a.href=dataUrl; a.download=name; a.click(); };
+    document.getElementById('btn-png-process').onclick   = ()=> dl(processChart.toBase64Image(), 'wgc_process.png');
+    document.getElementById('btn-png-vibration').onclick = ()=> dl(vibChart.toBase64Image(), 'wgc_vibration.png');
+    document.getElementById('btn-pdf').onclick = ()=>{
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({orientation:'portrait', unit:'pt', format:'a4'});
+      const margin = 24, pageW = pdf.internal.pageSize.getWidth(), imgW = pageW - 2*margin;
+      const add = (chart, y)=>{ const h = imgW * (chart.canvas.height / chart.canvas.width);
+                                pdf.addImage(chart.toBase64Image(), 'PNG', margin, y, imgW, h); return y + h + 16; };
+      let y = margin; y = add(processChart, y);
+      const pageH = pdf.internal.pageSize.getHeight();
+      if (y > pageH - margin){ pdf.addPage(); y = margin; }
+      add(vibChart, y); pdf.save('wgc_charts.pdf');
+    };
+
+    // Setpoints
+    const speedEl = document.getElementById('sp-speed'), speedVal = document.getElementById('sp-speed-val');
+    const valveEl = document.getElementById('sp-valve'), valveVal = document.getElementById('sp-valve-val');
+    const reflect = ()=>{ speedVal.textContent = speedEl.value; valveVal.textContent = valveEl.value; };
+    speedEl.oninput = reflect; valveEl.oninput = reflect; reflect();
+    document.getElementById('btn-apply').onclick = ()=>{
+      socket.emit('wgc_command', {action:'set', speed:Number(speedEl.value), valve:Number(valveEl.value)});
+    };
+
+    // Polling fallback
+    async function pollOnce(){
+      try{
+        const r = await fetch('/api/wgc/snapshot', { cache:'no-store' });
+        if (r.ok){ const d = await r.json(); console.log('[HTTP] snapshot', d?.oper); applySnapshot(d); }
+      }catch(_){}
+    }
+    setInterval(() => { if (Date.now() - lastUpdate > 3000) pollOnce(); }, 2000);
+
+    // Bootstrap
+    applySnapshot(window.__WGC__ || {});
+    pollOnce();
+  });
+  </script>
+</body>
+</html>
+

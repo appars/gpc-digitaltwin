@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Digital Twin — Wet Gas Compressor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2rem; background: #f7f7f8; color:#111; }
+    .card { background:#fff; border:1px solid #e5e7eb; border-radius: 14px; padding: 16px; box-shadow:0 4px 16px rgba(0,0,0,.05); max-width: 1200px; margin:auto; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 12px; }
+    .metric { background:#f6f7f9; border-radius: 10px; padding: 10px 12px; }
+    .label { font-size: 12px; color: #666; text-transform: uppercase; letter-spacing: .06em; }
+    .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+    .ok { color: #16a34a; } .warn { color: #b91c1c; font-weight: 700; }
+    .controls { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0; }
+    button{ padding:8px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; }
+    button.brand{ background:#0ea5e9; color:#fff; border-color:#0ea5e9; }
+    canvas{ background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:6px; }
+    .subtle{ color:#6b7280; font-size:14px; }
+  </style>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <h2>Digital Twin — Wet Gas Compressor (WGC)</h2>
+  <div class="card">
+    <div class="grid">
+      <div class="metric"><div class="label">Compression Ratio</div><div id="cr" class="value">—</div></div>
+      <div class="metric"><div class="label">Flow (kg/s)</div><div id="flow" class="value">—</div></div>
+      <div class="metric"><div class="label">P₁ / P₂ (bar)</div><div id="pp" class="value">—</div></div>
+      <div class="metric"><div class="label">T₁ / T₂ (K)</div><div id="tt" class="value">—</div></div>
+      <div class="metric"><div class="label">Speed (rpm)</div><div id="speed" class="value">—</div></div>
+      <div class="metric"><div class="label">Valve (%)</div><div id="valve" class="value">—</div></div>
+
+      <div class="metric"><div class="label">Surge Margin</div><div id="sm" class="value">—</div><div id="sm_status" class="ok">OK</div></div>
+      <div class="metric"><div class="label">Head Index</div><div id="head" class="value">—</div></div>
+      <div class="metric"><div class="label">Efficiency Index</div><div id="eff" class="value">—</div></div>
+
+      <div class="metric"><div class="label">Lube Oil (bar)</div><div id="oilp" class="value">—</div></div>
+      <div class="metric"><div class="label">Bearing / Oil Temp (K)</div><div id="bt" class="value">—</div></div>
+      <div class="metric"><div class="label">Seal Leakage (L/min)</div><div id="seal" class="value">—</div></div>
+
+      <div class="metric"><div class="label">Vibration (Ax/V/H, mm/s)</div><div id="vib" class="value">—</div><div id="vib_status" class="ok">OK</div></div>
+    </div>
+
+    <div class="controls">
+      <button id="btn-pause">Pause Charts</button>
+      <button id="btn-resume">Resume Charts</button>
+      <button id="btn-clear">Clear Charts</button>
+      <button id="btn-csv">Download CSV</button>
+      <button id="btn-stop">Stop WGC</button>
+      <button id="btn-start" class="brand">Start WGC</button>
+    </div>
+
+    <div class="card" style="margin:12px 0;">
+      <div class="label">Setpoints</div>
+      <div class="grid">
+        <div class="metric">
+          <div class="label">Speed (rpm)</div>
+          <input id="sp-speed" type="range" min="6000" max="9000" value="7800" step="10" style="width:100%">
+          <div class="subtle">Value: <span id="sp-speed-val">7800</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Valve (%)</div>
+          <input id="sp-valve" type="range" min="0" max="100" value="65" step="1" style="width:100%">
+          <div class="subtle">Value: <span id="sp-valve-val">65</span></div>
+        </div>
+        <div class="metric" style="display:flex;align-items:end;">
+          <button id="btn-apply" class="brand">Apply Setpoints</button>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="process" height="170"></canvas>
+    <br/>
+    <canvas id="vibration" height="150"></canvas>
+
+    <div class="metric" style="margin-top:1rem;">
+      <div class="label">Active Alarms</div>
+      <ul id="alarms"></ul>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let paused = false;
+    const MAX = 120;
+
+    const processChart = new Chart(document.getElementById('process'), {
+      type: 'line',
+      data: { labels: [], datasets: [
+        { label:'Flow (kg/s)', data:[], tension:.25 },
+        { label:'P1 (bar)', data:[], tension:.25, yAxisID:'y1' },
+        { label:'P2 (bar)', data:[], tension:.25, yAxisID:'y1' },
+      ]},
+      options: { responsive:true, animation:false, scales:{ y:{ title:{ text:'Flow', display:true } }, y1:{ position:'right', title:{ text:'Pressure (bar)', display:true } } } }
+    });
+    const vibChart = new Chart(document.getElementById('vibration'), {
+      type: 'line',
+      data: { labels: [], datasets: [
+        { label:'Axial (mm/s)', data:[], tension:.25 },
+        { label:'Vertical (mm/s)', data:[], tension:.25 },
+        { label:'Horizontal (mm/s)', data:[], tension:.25 },
+      ]},
+      options: { responsive:true, animation:false }
+    });
+
+    document.getElementById('btn-pause').onclick = ()=> paused = true;
+    document.getElementById('btn-resume').onclick = ()=> paused = false;
+    document.getElementById('btn-clear').onclick = ()=>{
+      [processChart, vibChart].forEach(ch => { ch.data.labels=[]; ch.data.datasets.forEach(d=>d.data=[]); ch.update(); });
+      fetch('/api/wgc/clear', {method:'POST'});
+    };
+    document.getElementById('btn-csv').onclick = ()=> window.location = '/api/wgc/history.csv';
+    document.getElementById('btn-stop').onclick = ()=> socket.emit('wgc_command', {action:'stop'});
+    document.getElementById('btn-start').onclick = ()=> socket.emit('wgc_command', {action:'start'});
+
+    // Setpoints
+    const speedEl = document.getElementById('sp-speed'), speedVal = document.getElementById('sp-speed-val');
+    const valveEl = document.getElementById('sp-valve'), valveVal = document.getElementById('sp-valve-val');
+    const reflect = ()=>{ speedVal.textContent = speedEl.value; valveVal.textContent = valveEl.value; };
+    speedEl.oninput = reflect; valveEl.oninput = reflect; reflect();
+    document.getElementById('btn-apply').onclick = ()=>{
+      socket.emit('wgc_command', {action:'set', speed: Number(speedEl.value), valve: Number(valveEl.value)});
+    };
+
+    socket.on('update_wgc', (data)=>{
+      const gas = data.gas || {}, oper = data.oper || {}, k = data.kpi || {}, h = data.health || {};
+      document.getElementById('cr').textContent   = (k.compression_ratio ?? 0).toFixed(2);
+      document.getElementById('flow').textContent = (oper.flow ?? 0).toFixed(2);
+      document.getElementById('pp').textContent   = `${(oper.P1 ?? 0).toFixed(2)} / ${(oper.P2 ?? 0).toFixed(2)}`;
+      document.getElementById('tt').textContent   = `${(oper.T1 ?? 0).toFixed(1)} / ${(oper.T2 ?? 0).toFixed(1)}`;
+      document.getElementById('speed').textContent= (oper.speed ?? 0).toFixed(0);
+      document.getElementById('valve').textContent= (oper.valve ?? 0).toFixed(0);
+      document.getElementById('sm').textContent   = `${(k.surge_margin_pct ?? 0).toFixed(1)} %`;
+      document.getElementById('head').textContent = (k.head_index_norm ?? 0).toFixed(2);
+      document.getElementById('eff').textContent  = (k.efficiency_index ?? 0).toFixed(0);
+      document.getElementById('oilp').textContent = (h.lube_oil_pressure ?? 0).toFixed(2);
+      document.getElementById('bt').textContent   = `${(h.bearing_temp ?? 0).toFixed(1)} / ${(h.oil_temp ?? 0).toFixed(1)}`;
+      document.getElementById('seal').textContent = (h.seal_leakage ?? 0).toFixed(2);
+      const vibStr = `${(h.vib_axial ?? 0).toFixed(2)} / ${(h.vib_vert ?? 0).toFixed(2)} / ${(h.vib_horz ?? 0).toFixed(2)}`;
+      document.getElementById('vib').textContent = vibStr;
+
+      const smEl = document.getElementById('sm_status');
+      if ((k.surge_margin_pct ?? 100) < 10) { smEl.textContent='Low Surge Margin'; smEl.className='warn'; }
+      else { smEl.textContent='OK'; smEl.className='ok'; }
+
+      const vibEl = document.getElementById('vib_status');
+      const bands = k.vibration || {};
+      const anyWarn = ['axial','vertical','horizontal'].some(ax => (bands[ax]||{}).band === 'Warning');
+      const anyTrip = ['axial','vertical','horizontal'].some(ax => (bands[ax]||{}).band === 'Trip');
+      if (anyTrip){ vibEl.textContent='Vibration Trip'; vibEl.className='warn'; }
+      else if (anyWarn){ vibEl.textContent='Vibration Warning'; vibEl.className='warn'; }
+      else { vibEl.textContent='OK'; vibEl.className='ok'; }
+
+      if (!paused){
+        const ts = new Date().toLocaleTimeString();
+        processChart.data.labels.push(ts);
+        processChart.data.datasets[0].data.push(oper.flow ?? 0);
+        processChart.data.datasets[1].data.push(oper.P1 ?? 0);
+        processChart.data.datasets[2].data.push(oper.P2 ?? 0);
+        vibChart.data.labels.push(ts);
+        vibChart.data.datasets[0].data.push(h.vib_axial ?? 0);
+        vibChart.data.datasets[1].data.push(h.vib_vert ?? 0);
+        vibChart.data.datasets[2].data.push(h.vib_horz ?? 0);
+        [processChart, vibChart].forEach(ch => {
+          if (ch.data.labels.length > MAX){ ch.data.labels.shift(); ch.data.datasets.forEach(d => d.data.shift()); }
+          ch.update();
+        });
+      }
+    });
+
+    socket.on('connect', ()=> console.log('[WS] WGC dashboard connected'));
+  </script>
+</body>
+</html>
