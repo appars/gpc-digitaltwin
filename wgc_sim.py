@@ -1,87 +1,76 @@
-#!/usr/bin/env python3
-import os
-import time
-import math
-import random
-import argparse
+# wgc_sim.py
+import os, time, random, logging
 import requests
 
-def clip(v, lo, hi): return max(lo, min(hi, v))
+BASE = os.getenv("TWIN_URL", "http://localhost:5050").rstrip("/")
+INGEST = f"{BASE}/ingest-wgc"
+
+# Logging: quiet by default
+VERBOSE = os.getenv("SIM_VERBOSE", "0") == "1"
+LOG_EVERY = int(os.getenv("SIM_LOG_EVERY", "0"))  # e.g. 100 to log every 100 samples; 0 = never
+logging.basicConfig(
+    level=(logging.INFO if VERBOSE else logging.WARNING),
+    format="[SIM] %(message)s"
+)
+log = logging.getLogger("sim")
+
+def clamp(v, lo, hi): 
+    return max(lo, min(hi, v))
+
+def make_sample(t):
+    # Simple synthetic dynamics
+    flow  = 26 + 2.5*random.random() + 0.5*random.uniform(-1,1)
+    P1    = 3.0 + 0.1*random.uniform(-1,1)
+    P2    = 8.7 + 0.2*random.uniform(-1,1) + 0.05*(flow-26)
+    T1    = 303.0 + 0.5*random.uniform(-1,1)
+    T2    = 352.0 + 1.2*random.uniform(-1,1) + 0.15*(P2-P1)
+
+    speed = 7800 + 80*random.uniform(-1,1)
+    valve = 65 + 2.0*random.uniform(-1,1)
+
+    v_ax   = clamp(2.0 + 1.4*random.random(), 0.2, 6.0)
+    v_vert = clamp(2.1 + 1.4*random.random(), 0.2, 6.0)
+    v_horz = clamp(2.2 + 1.4*random.random(), 0.2, 6.0)
+
+    oil_p  = 3.5 + 0.2*random.uniform(-1,1)
+    bt     = 340  + 1.5*random.uniform(-1,1)
+    ot     = 335  + 1.5*random.uniform(-1,1)
+    leak   = max(0.0, 0.2 + 0.1*random.random())
+
+    oper = {
+        "T1": round(T1,2), "T2": round(T2,2),
+        "P1": round(P1,2), "P2": round(P2,2),
+        "flow": round(flow,2),
+        "speed": round(speed,2),
+        "valve": round(valve,2),
+    }
+    health = {
+        "v_ax": round(v_ax,2), "v_vert": round(v_vert,2), "v_horz": round(v_horz,2),
+        "oil_pressure": round(oil_p,2),
+        "bearing_temp": round(bt,2), "oil_temp": round(ot,2),
+        "seal_leak": round(leak,2)
+    }
+    return {"oper": oper, "health": health}
 
 def main():
-    ap = argparse.ArgumentParser(description="WGC external simulator -> /ingest-wgc")
-    ap.add_argument("--base", default=os.getenv("WGC_URL", "http://localhost:5050"),
-                    help="Server base URL (default %(default)s)")
-    ap.add_argument("--hz", type=float, default=1.0, help="Send rate in Hz (default 1.0)")
-    ap.add_argument("--quiet", action="store_true", help="Less console output")
-    args = ap.parse_args()
+    i = 0
+    session = requests.Session()
+    timeout = float(os.getenv("SIM_TIMEOUT", "3.0"))
 
-    url = args.base.rstrip("/") + "/ingest-wgc"
-    dt = 1.0 / max(0.1, args.hz)
+    while True:
+        i += 1
+        payload = make_sample(i)
+        try:
+            session.post(INGEST, json=payload, timeout=timeout)
+        except Exception as e:
+            # Only show network errors if VERBOSE
+            if VERBOSE:
+                log.info("post failed: %s", e)
 
-    # initial conditions
-    speed = 7800.0
-    valve = 65.0
-    flow = 25.0
-    P1 = 3.0
-    P2 = 8.8
+        if LOG_EVERY and (i % LOG_EVERY == 0):
+            log.info("sent %d samples", i)
 
-    t0 = time.perf_counter()
-    sent = 0
-    print(f"[SIM] Posting to {url} at {args.hz:.2f} Hz (Ctrl+C to stop)")
-    try:
-        while True:
-            t = time.perf_counter() - t0
-
-            # simple wandering setpoints
-            speed = 7800 + 300 * math.sin(t * 0.05)
-            valve = 65 + 5 * math.sin(t * 0.08 + 1.0)
-
-            # synthesize process
-            target_flow = 0.0026 * speed + 0.18 * (valve / 100.0) * 30.0
-            flow += (target_flow - flow) * 0.15 + random.uniform(-0.2, 0.2)
-            flow = clip(flow, 20.0, 42.0)
-
-            P1 = 3.0 + 0.06 * math.sin(t * 0.12) + random.uniform(-0.05, 0.05)
-            dP = 0.006 * speed + 0.04 * (valve / 100.0) * 30.0 - 1.5
-            P2 = clip(P1 + dP, 6.5, 11.5)
-
-            T1 = 303.0 + random.uniform(-0.5, 0.5)
-            T2 = 352.0 + 0.02 * (P2 - P1) * 100 + random.uniform(-0.6, 0.6)
-
-            base_vib = 1.8 + 0.00012 * speed + 0.04 * max(0.0, (P2 - P1) - 5.0)
-            v_ax   = clip(base_vib + random.uniform(-0.4, 0.4), 0.6, 8.5)
-            v_vert = clip(base_vib + random.uniform(-0.3, 0.5), 0.6, 8.5)
-            v_horz = clip(base_vib + random.uniform(-0.3, 0.4), 0.6, 8.5)
-            oil_p  = clip(3.1 + 0.0005 * (speed - 7600) + random.uniform(-0.05, 0.05), 2.4, 4.5)
-            brg_t  = clip(340.0 + 0.004 * speed + random.uniform(-0.6, 0.8), 330.0, 385.0)
-            oil_t  = clip(323.0 + 0.002 * speed + random.uniform(-0.6, 0.8), 320.0, 370.0)
-            leak   = clip(0.10 + 0.00003 * (speed - 7000) + random.uniform(-0.01, 0.01), 0.0, 0.6)
-
-            payload = {
-                "wgc": {
-                    "oper": {"T1": T1, "T2": T2, "P1": P1, "P2": P2, "flow": flow, "speed": speed, "valve": valve},
-                    "health": {"v_ax": v_ax, "v_vert": v_vert, "v_horz": v_horz,
-                               "oil_pressure": oil_p, "bearing_temp": brg_t, "oil_temp": oil_t, "seal_leak": leak}
-                }
-            }
-
-            try:
-                r = requests.post(url, json=payload, timeout=3)
-                if r.status_code != 200 and not args.quiet:
-                    print(f"[SIM] POST -> {r.status_code} {r.text[:120]}")
-            except Exception as e:
-                if not args.quiet:
-                    print(f"[SIM] POST error: {e}")
-
-            sent += 1
-            if not args.quiet and sent % 10 == 0:
-                print(f"[SIM] sent {sent} samples")
-
-            time.sleep(dt)
-    except KeyboardInterrupt:
-        print("\n[SIM] stopped")
-
+        time.sleep(1.0)
 
 if __name__ == "__main__":
     main()

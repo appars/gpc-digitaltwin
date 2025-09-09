@@ -1,176 +1,140 @@
-#!/usr/bin/env python3
-import os, time, math, json, random, logging, threading
-from dataclasses import dataclass, asdict
-from typing import Dict
-from flask import Flask, render_template, redirect, url_for, send_from_directory, request, jsonify
-from flask_socketio import SocketIO
+import os
+import logging
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for
+from flask_socketio import SocketIO, emit
 
-# ------------ logging ------------
-LOG_LEVEL = os.getenv("LOG_LEVEL", "WARNING").upper()
-logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.WARNING),
-                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# ----------------- Logging: keep console clean -----------------
+def _init_logging():
+    # Default WARNING; change with LOG_LEVEL=INFO or DEBUG if you ever need it
+    level_name = os.getenv("LOG_LEVEL", "WARNING").upper()
+    level = getattr(logging, level_name, logging.WARNING)
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+
+    # Silence Werkzeug access logs entirely (in case anyone runs the dev server)
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    logging.getLogger("werkzeug.serving").setLevel(logging.ERROR)
+
+    # Silence python-socketio/engineio internal logs
+    logging.getLogger("engineio").setLevel(logging.ERROR)
+    logging.getLogger("socketio").setLevel(logging.ERROR)
+
+_init_logging()
 log = logging.getLogger("app")
 
-# ------------ app ------------
+# ----------------- Flask & Socket.IO -----------------
 app = Flask(__name__, static_folder="static", template_folder="templates")
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "wgc-demo")
-socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
-# ------------ domain model ------------
-@dataclass
-class Oper:
-    T1: float = 303.15
-    T2: float = 353.15
-    P1: float = 3.0
-    P2: float = 8.8
-    flow: float = 25.0
-    speed: float = 7800.0
-    valve: float = 65.0
+# Force Eventlet (quiet) and silence Socket.IO loggers
+# NOTE: Ensure `pip install eventlet`
+socketio = SocketIO(
+    app,
+    async_mode="eventlet",
+    cors_allowed_origins="*",
+    logger=False,
+    engineio_logger=False
+)
 
-@dataclass
-class Health:
-    v_ax: float = 2.2
-    v_vert: float = 2.8
-    v_horz: float = 2.5
-    oil_pressure: float = 3.2
-    bearing_temp: float = 344.0
-    oil_temp: float = 325.0
-    seal_leak: float = 0.12
+# ----------------- State -----------------
+wgc_state = {
+    "oper": {
+        "T1": None, "T2": None,   # K
+        "P1": None, "P2": None,   # bar
+        "flow": None,             # kg/s
+        "speed": None,            # rpm
+        "valve": None             # %
+    },
+    "health": {
+        "v_ax": 0.0, "v_vert": 0.0, "v_horz": 0.0,        # mm/s
+        "oil_pressure": None, "bearing_temp": None,
+        "oil_temp": None, "seal_leak": None
+    },
+    "ts": None
+}
+running = False  # server-side run flag
 
-state_lock = threading.RLock()
-state_oper = Oper()
-state_health = Health()
-setpoints: Dict[str, float] = {"speed": 7800.0, "valve": 65.0}
-
-running_evt = threading.Event()
-sim_thread: threading.Thread | None = None
-
-def snapshot() -> dict:
-    with state_lock:
-        return {"oper": asdict(state_oper), "health": asdict(state_health)}
-
-# ------------ simulation ------------
-def _clip(v, lo, hi): return max(lo, min(hi, v))
-
-def sim_step():
-    global state_oper, state_health
-    with state_lock:
-        # follow setpoints
-        state_oper.speed += (setpoints["speed"] - state_oper.speed) * 0.12
-        state_oper.valve += (setpoints["valve"] - state_oper.valve) * 0.18
-
-        # flow ~ speed and valve
-        target_flow = 0.0025 * state_oper.speed + 0.18 * (state_oper.valve / 100.0) * 30.0
-        state_oper.flow += (target_flow - state_oper.flow) * 0.15 + random.uniform(-0.15, 0.15)
-        state_oper.flow = _clip(state_oper.flow, 20.0, 42.0)
-
-        # pressures
-        base_p1 = 3.0 + 0.05 * math.sin(time.time() * 0.15)
-        dP = 0.006 * state_oper.speed + 0.04 * (state_oper.valve / 100.0) * 30.0 - 1.5
-        state_oper.P1 = base_p1 + random.uniform(-0.05, 0.05)
-        state_oper.P2 = _clip(state_oper.P1 + dP, 6.5, 11.5)
-
-        # temps
-        state_oper.T1 = 303.0 + random.uniform(-0.5, 0.5)
-        state_oper.T2 = 352.0 + 0.02 * (state_oper.P2 - state_oper.P1) * 100 + random.uniform(-0.7, 0.7)
-
-        # health (simple coupling)
-        base_vib = 1.8 + 0.00012 * state_oper.speed + 0.04 * max(0.0, (state_oper.P2 - state_oper.P1) - 5.0)
-        state_health.v_ax   = _clip(base_vib + random.uniform(-0.4, 0.4), 0.6, 8.5)
-        state_health.v_vert = _clip(base_vib + random.uniform(-0.3, 0.5), 0.6, 8.5)
-        state_health.v_horz = _clip(base_vib + random.uniform(-0.3, 0.4), 0.6, 8.5)
-
-        state_health.oil_pressure = _clip(3.1 + 0.002 * (7800 - abs(7800 - state_oper.speed)) + random.uniform(-0.05, 0.05), 2.4, 4.5)
-        state_health.bearing_temp = _clip(340.0 + 0.004 * state_oper.speed + random.uniform(-0.6, 0.8), 330.0, 385.0)
-        state_health.oil_temp     = _clip(323.0 + 0.002 * state_oper.speed + random.uniform(-0.6, 0.8), 320.0, 370.0)
-        state_health.seal_leak    = _clip(0.09 + 0.00003 * (state_oper.speed - 7000) + random.uniform(-0.01, 0.01), 0.0, 0.6)
-
-def sim_loop():
-    while running_evt.is_set():
-        t0 = time.perf_counter()
-        sim_step()
-        socketio.emit("wgc_data", {"wgc": snapshot(), "running": running_evt.is_set()})
-        time.sleep(max(0.0, 1.0 - (time.perf_counter() - t0)))
-
-def start_sim():
-    global sim_thread
-    if running_evt.is_set():
-        return
-    running_evt.set()
-    sim_thread = threading.Thread(target=sim_loop, name="wgc-sim", daemon=True)
-    sim_thread.start()
-
-def stop_sim():
-    running_evt.clear()
-
-# ------------ routes ------------
-@app.route("/")
-def index():
-    return redirect(url_for("wgc_page"))
-
-@app.route("/wgc")
-def wgc_page():
-    return render_template("wgc.html", wgc=snapshot())
-
+# ----------------- Routes -----------------
 @app.route("/favicon.ico")
 def favicon():
     return send_from_directory("static", "favicon.svg", mimetype="image/svg+xml")
 
-# optional HTTP ingest
-@app.route("/ingest-wgc", methods=["POST"])
+@app.route("/")
+def index():
+    # You can keep a simple home or redirect straight to the dashboard
+    return redirect(url_for("wgc"))
+
+@app.route("/wgc")
+def wgc():
+    # Bootstrap snapshot for the client
+    snap = {
+        "oper": wgc_state["oper"],
+        "health": wgc_state["health"],
+        "ts": wgc_state["ts"],
+        "running": running
+    }
+    return render_template("wgc.html", wgc=snap)
+
+# Telemetry ingest (quiet)
+@app.post("/ingest-wgc")
 def ingest_wgc():
+    global wgc_state
     try:
-        payload = request.get_json(force=True, silent=False)
-    except Exception:
-        return jsonify({"ok": False, "error": "invalid json"}), 400
-    data = payload.get("wgc", payload)
-    oper = data.get("oper", {})
-    health = data.get("health", {})
-    with state_lock:
-        for k, v in oper.items():
-            if hasattr(state_oper, k):
-                setattr(state_oper, k, float(v))
-        for k, v in health.items():
-            if hasattr(state_health, k):
-                setattr(state_health, k, float(v))
-    socketio.emit("wgc_data", {"wgc": snapshot(), "running": running_evt.is_set()})
-    return jsonify({"ok": True})
+        data = request.get_json(silent=True) or {}
+        oper = data.get("oper") or {}
+        health = data.get("health") or {}
 
-# change log level via curl
-@app.route("/admin/log-level", methods=["POST"])
-def admin_log_level():
-    level = (request.values.get("level") or (request.json or {}).get("level", "")).upper()
-    if level in ("DEBUG","INFO","WARNING","ERROR","CRITICAL"):
-        logging.getLogger().setLevel(getattr(logging, level))
-        for name in logging.root.manager.loggerDict:
-            logging.getLogger(name).setLevel(getattr(logging, level))
-        return jsonify({"ok": True, "level": level})
-    return jsonify({"ok": False, "error": "invalid level"}), 400
+        # update state
+        wgc_state["oper"].update(oper)
+        wgc_state["health"].update(health)
+        wgc_state["ts"] = datetime.utcnow().isoformat() + "Z"
 
-# ------------ socket.io ------------
+        # broadcast to all dashboards (no noisy logs)
+        payload = {"wgc": {"oper": wgc_state["oper"],
+                           "health": wgc_state["health"],
+                           "ts": wgc_state["ts"]},
+                   "running": running}
+        socketio.emit("wgc_data", payload)
+        return jsonify({"ok": True})
+    except Exception as e:
+        # Only warn on errors
+        log.warning("ingest error: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+# ----------------- WebSocket events -----------------
 @socketio.on("connect")
-def on_connect():
-    sid = request.sid
-    socketio.emit("wgc_data", {"wgc": snapshot(), "running": running_evt.is_set()}, to=sid)
+def ws_connect():
+    # Push a snapshot on connect
+    emit("wgc_data", {"wgc": wgc_state, "running": running})
 
 @socketio.on("wgc_command")
-def on_wgc_command(message):
-    action = (message or {}).get("action")
-    if action == "start":
-        start_sim()
-    elif action == "stop":
-        stop_sim()
-    elif action == "setpoints":
-        spd = message.get("speed")
-        vlv = message.get("valve")
-        with state_lock:
-            if spd is not None: setpoints["speed"] = float(spd)
-            if vlv is not None: setpoints["valve"] = float(vlv)
-    socketio.emit("wgc_ack", {"ok": True, "action": action, "running": running_evt.is_set()}, to=request.sid)
+def ws_wgc_command(msg):
+    global running
+    try:
+        action = (msg or {}).get("action")
+        if action == "start":
+            running = True
+        elif action == "stop":
+            running = False
+        elif action == "setpoints":
+            spd = msg.get("speed")
+            v   = msg.get("valve")
+            if isinstance(spd, (int, float)):
+                wgc_state["oper"]["speed"] = float(spd)
+            if isinstance(v, (int, float)):
+                wgc_state["oper"]["valve"] = float(v)
+        # Ack back (keeps the UI badge in sync)
+        emit("wgc_ack", {"ok": True, "running": running})
+    except Exception as e:
+        emit("wgc_ack", {"ok": False, "error": str(e)})
 
-# ------------ main ------------
+# ----------------- Main -----------------
 if __name__ == "__main__":
-    if os.getenv("WGC_AUTOSTART", "1") != "0":
-        start_sim()
-    socketio.run(app, host=os.getenv("HOST","0.0.0.0"), port=int(os.getenv("PORT","5050")), debug=False)
+    # Eventlet server (quiet): no access logs, no polling lines
+    port = int(os.getenv("PORT", "5050"))
+    # log_output=False keeps eventlet from printing per-request logs
+    socketio.run(app, host="0.0.0.0", port=port, log_output=False)
 
