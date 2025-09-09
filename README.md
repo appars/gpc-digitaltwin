@@ -1,213 +1,231 @@
-# Digital Twin — Wet Gas Compressor (WGC)
-## Real‑time Monitoring & Optimization
-This repository showcases a professional, demo-grade **Digital Twin for a Wet Gas Compressor (WGC)**. It ingests synthetic process & mechanical-health telemetry in real time and renders an operator-friendly web dashboard for monitoring, diagnostics, and what-if control.
+# Wet Gas Compressor — Digital Twin (Real‑Time Monitoring & Optimization)
+
+> **Live Demo (Cloud Run):** https://wgc-demo-502630974508.us-central1.run.app/wgc
+
+> **Note:** The repository name may still say `motor-digitaltwin`, but this project is now a **Wet Gas Compressor (WGC)** digital twin demo.
+
 ![Dashboard](docs/screenshot.png)
 
 ---
 
-## ✨ Features
+## ⭐ What you get
 
-- **Live telemetry → Real‑time charts** (Chart.js 4)  
-  - Process: **Flow**, **P1**, **P2** with thresholds & alarm zones  
-  - Mechanical health: **Vibration Ax/Vert/Horz**
-- **Compressor map (synthetic)**: speed curves (7000/7800/8500 rpm), **surge line**, **current point**
-- **Dark/Light** theme toggle
-- **Time scrubber & Replay** (~30 min buffer)
-- **Exports**: PNG (per chart), CSV (timeseries), PDF (both charts), **Daily report PDF** (KPIs + alarm counts)
-- **Controls**: Start/Stop + setpoints (**Speed**, **Valve**)
-- **Quiet logs** by default (no noisy HTTP access lines)
+- **Real‑time dashboards** (Chart.js): process (Flow/P1/P2) and vibration (Ax/Vert/Horz).
+- **Dark / Light** theme toggle.
+- **Zoom & Pan** on charts (local plugins included).
+- **Thresholds & shading** (warn/trip bands for P2 and vibration).
+- **Compressor performance map**: synthetic speed lines + surge line + current operating point.
+- **Replay last window**: time scrubber, Replay / Stop Replay, Live mode.
+- **Controls**: Pause/Resume/Clear charts.
+- **Setpoints**: Speed & Valve sliders with *Apply* (emits command to server).
+- **Start/Stop** WGC commands (sends `wgc_command` via WebSocket).
+- **Exports**: PNG (per‑chart), CSV (timeseries), PDF (2‑up charts), PDF daily report (KPIs + alarms + chart).
+- **Quiet server logs** out of the box (Werkzeug access logs disabled).
 
 ---
 
 ## 🧱 Architecture
 
-```
-wgc_sim.py  ──(HTTP JSON every 1s)──>  Flask app (/ingest-wgc)
-                                      │
-                                      └─> Flask-SocketIO → web clients (wgc.html)
-                                              ▲
-                                   Chart.js + Zoom + Annotation + jsPDF
-```
+- **Flask + Flask‑SocketIO** service
+  - Routes: `/wgc` (dashboard), `/ingest-wgc` (data ingest, JSON), static assets under `/static`.
+  - WebSocket channel pushes updates to the UI and receives commands.
+- **Simulator** (`wgc_sim.py` or containerized job) posts JSON samples to `/ingest-wgc`.
+- **No database** (in‑memory ring buffer + browser history only).
 
-- **Server:** Flask + Flask‑SocketIO (Eventlet runner)  
-- **Client:** Chart.js, chartjs-plugin-zoom, chartjs-plugin-annotation, jsPDF  
-- **Ingest API:** `POST /ingest-wgc` (JSON). Server broadcasts snapshots on `wgc_data`.  
-  UI sends `wgc_command` (`start` / `stop` / `setpoints`) and receives `wgc_ack`.
+```
+(sim) ──HTTP POST──>  /ingest-wgc  →  server keeps snapshot → emits via Socket.IO →  browser charts
+```
 
 ---
 
-## 🚀 Quick Start (Local)
+## 🚀 Run locally
 
-Requirements: **Python 3.11+**
+### 1) Clone & install
 
 ```bash
-git clone https://github.com/appars/motor-digitaltwin.git
-cd motor-digitaltwin
+git clone https://github.com/appars/gpc-digitaltwin.git
+cd gpc-digitaltwin
 
-python3 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
+# (optional) use a virtualenv
+python3 -m venv venv && source venv/bin/activate
 
-# Install deps
-pip install -r requirements.txt  # if present
-# or:
-pip install flask Flask-SocketIO eventlet requests
-
-# Run server (default port 5050)
-python app.py
-# open http://localhost:5050/wgc
-
-# In a second terminal: start the simulator (posts data every ~1s)
-source venv/bin/activate
-python wgc_sim.py
+pip install -r requirements.txt
 ```
 
-**Environment variables (server):**
+### 2) Start the app
 
-- `PORT` (default `5050`)
-- `LOG_LEVEL` (default `WARNING` → quiet; use `INFO`/`DEBUG` if needed)
+```bash
+python app.py
+# Serves on http://127.0.0.1:5050  (and LAN IP)
+```
 
-**Environment variables (simulator):**
+Open: **http://localhost:5050/wgc**
 
-- `TWIN_URL` (default `http://localhost:5050`)
-- `SIM_VERBOSE=1` (show progress/errors)
-- `SIM_LOG_EVERY=200` (progress line every N samples)
-- `SIM_TIMEOUT` (POST timeout, default `3.0` s)
+### 3) Start the simulator (local)
+
+```bash
+python wgc_sim.py --url http://localhost:5050 --hz 1.0 --log-every 60 --verbose
+```
+
+**Simulator options**
+
+| Flag | Env | Default | Meaning |
+|---|---|---|---|
+| `--url` | `TWIN_URL` | `http://localhost:5050` | Base URL of the Flask service |
+| `--hz` | `SIM_HZ` | `1.0` | Samples per second |
+| `--log-every` | `SIM_LOG_EVERY` | `0` | Log every N samples (0 = silent) |
+| `--verbose` | `SIM_VERBOSE=1` | off | Log network errors & status |
+| *(n/a)* | `SIM_TIMEOUT` | `3.0` | POST timeout (seconds) |
+
+> You can also just set env vars and run `python wgc_sim.py` with no flags.
 
 ---
 
-## 📡 Ingest API
+## ☁️ Deploy on Google Cloud Run (App)
 
-**POST** `/ingest-wgc`
+**Prereqs**: A GCP project, Artifact Registry repo (or use Cloud Build default), `gcloud` CLI, billing enabled.
 
-**Body (JSON):**
+1. **Build & deploy** (from repo root, Cloud Shell is easiest):
+
+```bash
+PROJECT_ID=$(gcloud config get-value project)
+REGION=us-central1
+SERVICE=wgc-demo
+
+gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT_ID/wgc/$SERVICE:latest
+
+gcloud run deploy $SERVICE   --image $REGION-docker.pkg.dev/$PROJECT_ID/wgc/$SERVICE:latest   --region $REGION   --allow-unauthenticated   --port 5050
+```
+
+2. **Open** the URL printed by `gcloud run deploy` and append `/wgc`
+
+> Example: `https://wgc-demo-XXXXXXXXXXX.us-central1.run.app/wgc`
+
+> The service is **stateless** and **keeps data in memory** only.
+
+---
+
+## 🏃 Run the simulator on Cloud Run Jobs
+
+You can push synthetic data from the cloud instead of your laptop.
+
+### 1) Build & push the sim image
+
+```bash
+# one-time layout
+mkdir -p sim
+cp Dockerfile.sim sim/Dockerfile
+cp wgc_sim.py sim/
+
+PROJECT_ID=$(gcloud config get-value project)
+REGION=us-central1
+REPO=wgc
+IMAGE=wgc-sim
+
+gcloud builds submit sim --tag $REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest
+```
+
+### 2) Create the Job (gen2 requires ≥ 1 vCPU and ≥ 512Mi)
+
+```bash
+JOB=wgc-sim
+SERVICE_URL="https://wgc-demo-502630974508.us-central1.run.app"
+
+gcloud run jobs create $JOB   --image $REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest   --region $REGION   --set-env-vars TWIN_URL=$SERVICE_URL,SIM_HZ=1.0,SIM_LOG_EVERY=60,SIM_VERBOSE=1   --cpu=1 --memory=512Mi   --task-timeout=86400s   --max-retries=0
+```
+
+> If the job already exists, use `gcloud run jobs update …` with the same flags.
+
+### 3) Execute / Stop
+
+```bash
+gcloud run jobs execute $JOB --region $REGION
+# To stop, delete the execution (or let it exit if your sim exits)
+gcloud run jobs executions list --region $REGION --job $JOB
+gcloud run jobs executions delete EXECUTION_ID --region $REGION
+```
+
+### 4) Tail logs
+
+```bash
+REGION=us-central1
+JOB=wgc-sim
+
+gcloud beta logging tail   --log-filter='resource.type="run_job"
+                AND resource.labels.location="'$REGION'"
+                AND resource.labels.job_name="'$JOB'"'   --format='table(timestamp,severity,textPayload,jsonPayload.message)'
+```
+
+---
+
+## 🔧 Server configuration
+
+The Flask service reads a few environment variables:
+
+| Env | Default | Purpose |
+|---|---|---|
+| `PORT` | `5050` | Listening port (Cloud Run sets this automatically) |
+| `WGC_LOG_REQUESTS` | `0` | If `1`, enable Werkzeug access logs; default is silent |
+| `WGC_LOG_LEVEL` | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`) |
+
+**Endpoints**
+
+- `GET /wgc` — dashboard UI
+- `POST /ingest-wgc` — ingest JSON payload `{{oper:{...}, health:{...}}}`
+- WebSocket (Socket.IO) — real‑time updates + `wgc_command` (start/stop/setpoints)
+
+**Expected payload** (example)
 ```json
 {
-  "oper": {
-    "T1": 303.2, "T2": 352.9,
-    "P1": 3.02,  "P2": 8.84,
-    "flow": 26.1,
-    "speed": 7800,
-    "valve": 65
-  },
-  "health": {
-    "v_ax": 2.4, "v_vert": 2.7, "v_horz": 2.9,
-    "oil_pressure": 3.6,
-    "bearing_temp": 340.5, "oil_temp": 335.2,
-    "seal_leak": 0.25
-  }
+  "oper": {"T1":303.2,"T2":352.8,"P1":3.02,"P2":8.82,"flow":26.1,"speed":7811,"valve":65},
+  "health": {"v_ax":2.6,"v_vert":2.9,"v_horz":3.1,"oil_pressure":3.6,"bearing_temp":340,"oil_temp":335,"seal_leak":0.2}
 }
 ```
 
-**Response:**
-```json
-{"ok": true}
-```
-
-**Socket.IO events:**
-
-- Server → Client: `wgc_data` (live snapshots), `wgc_ack` (acknowledgements)  
-- Client → Server: `wgc_command`  
-  - `{ "action":"start" }`  
-  - `{ "action":"stop" }`  
-  - `{ "action":"setpoints", "speed": 7800, "valve": 65 }`
-
 ---
 
-## 🖥️ UI Cheat‑Sheet
-
-- **KPIs:** Compression ratio, Flow, P1/P2, T1/T2, Speed, Valve, Surge Margin, Head/Efficiency indices, Lube oil pressure, Bearing/Oil temp, Seal leakage, Vibration
-- **Controls:** Pause / Resume / Clear charts; Start / Stop; Setpoints sliders
-- **Time tools:** **Live**, **Scrub** slider, **Replay** (playback), **Stop Replay**
-- **Exports:** PNG (process/vibration), CSV, **PDF: both charts**, **Daily PDF** with KPIs + alarm counts
-- **Thresholds** (editable in `templates/wgc.html`):
-  - **P2 warn/trip:** 9.5 / 10.5 bar
-  - **Vibration warn/trip:** 3.5 / 7.1 mm/s
-
----
-
-## 📁 Project Structure
+## 📁 Project layout
 
 ```
-motor-digitaltwin/
-├─ app.py                     # Flask + Socket.IO (quiet by default)
-├─ wgc_sim.py                 # Synthetic telemetry generator
+.
+├─ app.py
+├─ wgc_sim.py
+├─ requirements.txt
 ├─ templates/
-│  └─ wgc.html                # Full UI (charts, controls, exports, dark mode)
+│  └─ wgc.html          # UI (Chart.js + Socket.IO)
 ├─ static/
 │  ├─ favicon.svg
 │  └─ vendor/
 │     ├─ chartjs-plugin-zoom.umd.min.js
 │     └─ chartjs-plugin-annotation.umd.min.js
+├─ Dockerfile           # app container
+├─ Dockerfile.sim       # simulator container
+├─ sim/                 # (optional) build context for the job
 ├─ docs/
-│  └─ screenshot.png          # (optional) used in README
-├─ requirements.txt           # (optional) pinned deps
+│  └─ screenshot.png    # add your screenshot
 └─ README.md
 ```
 
-> Plugins are served **locally** from `static/vendor/` to avoid CDN hiccups.
-
 ---
 
-## 🔧 Customization
+## 🧪 Local tips
 
-- **Thresholds / labels:** edit annotation config in `templates/wgc.html`.
-- **Theme & palette:** CSS variables at top of `wgc.html` (`:root` & `html[data-theme="dark"]`).
-- **Chart performance:** LTTB decimation on; adjust `samples`, history buffer (`MAX_HIST`), and window (`WIN`) in `wgc.html`.
-
----
-
-## 🧪 Troubleshooting
-
-- **No data on charts** → run simulator and ensure it points to your server:
-  ```bash
-  export TWIN_URL=http://127.0.0.1:5050
-  python wgc_sim.py
-  ```
-- **Socket.IO 400 / `io is not defined`** → ensure client lib is loaded in `wgc.html`:
-  ```html
-  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
-  ```
-  and server is Flask‑SocketIO (which serves `/socket.io/`).
-- **Port busy** → `lsof -i :5050` and kill, or `export PORT=5051`.
-- **Logs too chatty** → default is `LOG_LEVEL=WARNING`; avoid `print()` in code.
-
----
-
-## 📦 Suggested `requirements.txt`
-
-```txt
-Flask>=3.0
-Flask-SocketIO>=5.3
-python-socketio>=5.11
-python-engineio>=4.9
-eventlet>=0.36
-requests>=2.31
-```
-
-Install with:
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## 🔒 Demo Safety Notes
-
-- This is a **demo**. Thresholds, compressor map, and derived indices are illustrative.
-- For production: secure `/ingest-wgc` (authN/Z, rate limiting), add HTTPS, persist data, and harden deployment.
+- If **charts are blank**:
+  - Make sure the **simulator** is posting to your app URL.
+  - Check browser console for plugin loading — both plugins are served locally from `/static/vendor/`.
+- If using **Cloud Run**, ensure the **simulator points to the Cloud Run URL** and your service allows **unauthenticated** access (for the UI) while ingest is open to POSTs.
+- Socket.IO on Cloud Run works over **WebSockets** and **polling**; no extra config needed.
 
 ---
 
 ## 📜 License
 
-Choose a license (e.g., **MIT**) for your repo:
-
-```
-MIT © 2025 Apparsamy Perumal
-```
+MIT — see `LICENSE`.
 
 ---
 
-### 🙌 Acknowledgements
-Built with Flask, Flask‑SocketIO, Chart.js, chartjs-plugin-zoom, chartjs-plugin-annotation, and jsPDF.
+## 🙌 Acknowledgments
+
+- Charting with **Chart.js** (+ zoom & annotation plugins)
+- PDFs with **jsPDF**
+- WebSockets with **Flask‑SocketIO**
