@@ -1,5 +1,5 @@
 # Digital Twin — Wet Gas Compressor (WGC)
-**Real‑time Monitoring & Optimization Demo**
+## Real‑time Monitoring & Optimization
 This repository showcases a professional, demo-grade **Digital Twin for a Wet Gas Compressor (WGC)**. It ingests synthetic process & mechanical-health telemetry in real time and renders an operator-friendly web dashboard for monitoring, diagnostics, and what-if control.
 ![Dashboard](docs/screenshot.png)
 
