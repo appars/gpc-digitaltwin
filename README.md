@@ -204,7 +204,7 @@ pip install -r requirements.txt
 Choose a license (e.g., **MIT**) for your repo:
 
 ```
-MIT © 2025 Your Name
+MIT © 2025 Apparsamy Perumal
 ```
 
 ---
