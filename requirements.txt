@@ -1,7 +1,8 @@
-Flask>=3.0
-Flask-SocketIO>=5.3
-python-socketio>=5.11
-python-engineio>=4.9
-eventlet>=0.36
-requests>=2.31
-
+Flask==3.0.3
+Flask-SocketIO==5.3.6
+eventlet==0.36.1
+gunicorn==21.2.0
+itsdangerous==2.2.0
+Jinja2==3.1.4
+python-engineio==4.9.1
+python-socketio==5.11.3
